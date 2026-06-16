@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Literaturverzeichnis-Checker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --primary: #4F46E5; --primary-dark: #4338CA;
+    --gray-50:#F9FAFB; --gray-100:#F3F4F6; --gray-200:#E5E7EB;
+    --gray-500:#6B7280; --gray-700:#374151; --gray-900:#111827;
+    --danger:#EF4444; --danger-light:#FEE2E2;
+    --success:#10B981; --success-light:#D1FAE5;
+    --radius:12px; --shadow:0 1px 3px rgba(0,0,0,.1),0 1px 2px rgba(0,0,0,.06);
+  }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--gray-50); color:var(--gray-900); min-height:100vh; }
+  main { max-width:640px; margin:0 auto; padding:48px 16px; }
+  h1 { font-size:24px; font-weight:700; letter-spacing:-.5px; }
+  p.lead { color:var(--gray-500); margin-top:8px; font-size:14px; line-height:1.5; }
+  .card { background:white; border-radius:var(--radius); box-shadow:var(--shadow); padding:24px; margin-top:24px; }
+  .dropzone { border:2px dashed var(--gray-200); border-radius:var(--radius); padding:32px; text-align:center; cursor:pointer; transition:border-color .15s, background .15s; }
+  .dropzone.dragover, .dropzone:hover { border-color:var(--primary); background:#F5F5FF; }
+  .dropzone input { display:none; }
+  .dropzone .filename { margin-top:8px; font-size:13px; color:var(--gray-700); font-weight:600; }
+  .row { display:flex; gap:12px; margin-top:16px; }
+  .form-group { flex:1; }
+  label { display:block; font-size:13px; font-weight:500; color:var(--gray-700); margin-bottom:6px; }
+  input[type=number] { width:100%; border:1.5px solid var(--gray-200); border-radius:8px; padding:9px 12px; font-size:14px; outline:none; }
+  input[type=number]:focus { border-color:var(--primary); }
+  .hint { font-size:12px; color:var(--gray-500); margin-top:6px; }
+  .btn { display:inline-flex; align-items:center; gap:8px; padding:11px 22px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; border:none; background:var(--primary); color:white; margin-top:20px; width:100%; justify-content:center; }
+  .btn:hover { background:var(--primary-dark); }
+  .btn:disabled { opacity:.6; cursor:not-allowed; }
+  .spinner { width:16px; height:16px; border:2px solid rgba(255,255,255,.4); border-top-color:white; border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .status { margin-top:16px; padding:12px 14px; border-radius:8px; font-size:13px; display:none; }
+  .status.error { display:block; background:var(--danger-light); color:var(--danger); }
+  .status.success { display:block; background:var(--success-light); color:var(--success); }
+  footer { margin-top:32px; font-size:12px; color:var(--gray-500); text-align:center; }
+  footer a { color:var(--primary); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Literaturverzeichnis-Checker</h1>
+  <p class="lead">
+    PDF einer Abschlussarbeit hochladen - das Literaturverzeichnis wird automatisch
+    erkannt, jede Quelle gegen CrossRef, OpenAlex und Semantic Scholar geprüft und
+    als Excel-Tabelle mit Status je Zitat zurückgegeben.
+  </p>
+
+  <div class="card">
+    <form id="check-form">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="pdf-input" accept="application/pdf" required>
+        <div>PDF hier ablegen oder klicken zum Auswählen</div>
+        <div class="filename" id="filename"></div>
+      </div>
+
+      <div class="row">
+        <div class="form-group">
+          <label for="start-page">Startseite (optional)</label>
+          <input type="number" id="start-page" min="1" placeholder="auto">
+        </div>
+        <div class="form-group">
+          <label for="end-page">Endseite (optional)</label>
+          <input type="number" id="end-page" min="1" placeholder="auto">
+        </div>
+      </div>
+      <p class="hint">Leer lassen, damit das Literaturverzeichnis automatisch erkannt wird.</p>
+
+      <button type="submit" class="btn" id="submit-btn">Prüfen & Excel herunterladen</button>
+      <div class="status" id="status"></div>
+    </form>
+  </div>
+
+  <footer>
+    Ergebnisse sind ein Hilfsmittel, kein Beweis - Status "Unklar" oder
+    "vermutlich halluziniert" manuell gegenprüfen.
+    Quellcode: <a href="https://github.com/frederikernst27-byte/Literatur-Verzeichnis-Check" target="_blank">GitHub</a>
+  </footer>
+</main>
+
+<script>
+const form = document.getElementById('check-form');
+const dropzone = document.getElementById('dropzone');
+const pdfInput = document.getElementById('pdf-input');
+const filenameEl = document.getElementById('filename');
+const submitBtn = document.getElementById('submit-btn');
+const statusEl = document.getElementById('status');
+
+dropzone.addEventListener('click', () => pdfInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) {
+    pdfInput.files = e.dataTransfer.files;
+    updateFilename();
+  }
+});
+pdfInput.addEventListener('change', updateFilename);
+
+function updateFilename() {
+  filenameEl.textContent = pdfInput.files[0] ? pdfInput.files[0].name : '';
+}
+
+function setStatus(message, type) {
+  statusEl.textContent = message;
+  statusEl.className = 'status' + (type ? ' ' + type : '');
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!pdfInput.files[0]) return;
+
+  setStatus('', '');
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span class="spinner"></span> Wird geprüft - kann bei vielen Zitaten etwas dauern...';
+
+  const formData = new FormData();
+  formData.append('pdf', pdfInput.files[0]);
+  const startPage = document.getElementById('start-page').value;
+  const endPage = document.getElementById('end-page').value;
+  if (startPage) formData.append('start_page', startPage);
+  if (endPage) formData.append('end_page', endPage);
+
+  try {
+    const res = await fetch('/api/check', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Prüfung fehlgeschlagen.');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'literaturpruefung.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus('Fertig - Excel-Datei wurde heruntergeladen.', 'success');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Prüfen & Excel herunterladen';
+  }
+});
+</script>
+</body>
+</html>
