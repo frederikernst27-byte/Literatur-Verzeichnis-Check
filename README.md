@@ -11,11 +11,19 @@ Nutzung und zum E-Mail-Bot siehe
 Ergebnis herunterladen), `api/check.py` die zugehörige Python-Serverless-
 Function. Beides nutzt direkt den Code aus `literaturverzeichnis-checker/`.
 
-Deploy auf Vercel:
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/import?s=https://github.com/frederikernst27-byte/Literatur-Verzeichnis-Check)
+
+Per Klick auf den Button (oder im Vercel-Dashboard unter "Add New -> Project"
+dieses GitHub-Repo auswählen) importiert Vercel das Repo und deployed automatisch -
+`vercel.json` und `requirements.txt` sind bereits vorbereitet, es muss nichts
+konfiguriert werden. Jeder Push auf `main` deployed danach automatisch neu.
+
+Alternativ per CLI (erfordert Login im Browser):
 
 ```bash
 npm i -g vercel
-vercel
+vercel login
+vercel --prod
 ```
 
 Hinweise:
