@@ -1,0 +1,103 @@
+"""Rohtext des Literaturverzeichnisses -> Liste einzelner Zitate mit Metadaten.
+
+Die Heuristiken decken die gängigsten Stile ab (nummeriert, APA-artig mit
+hängendem Einzug). Sie sind bewusst einfach gehalten - Ziel ist eine
+brauchbare Grundlage für die anschließende Verifikation, kein
+hundertprozentig korrekter Zitations-Parser.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+NUMBERED_LINE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)[.)])\s+")
+YEAR_RE = re.compile(r"\(?\b(1[89]\d{2}|20\d{2})[a-z]?\b\)?")
+DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
+PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
+AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
+
+
+@dataclass
+class Citation:
+    number: int
+    raw_text: str
+    authors: str | None = None
+    year: str | None = None
+    title: str | None = None
+    pages: str | None = None
+    doi: str | None = None
+    discrepancies: list[str] = field(default_factory=list)
+
+
+def parse_citations(text: str) -> list[Citation]:
+    entries = _split_entries(text)
+    return [_parse_entry(i + 1, entry) for i, entry in enumerate(entries)]
+
+
+def _split_entries(text: str) -> list[str]:
+    lines = [l for l in text.splitlines()]
+    # Kopfzeilen wie "Literaturverzeichnis" / Seitenzahlen-Zeilen rauswerfen
+    lines = [l for l in lines if l.strip() and not re.fullmatch(r"\d+", l.strip())]
+
+    numbered_indices = [i for i, l in enumerate(lines) if NUMBERED_LINE.match(l)]
+    if len(numbered_indices) >= 2:
+        return _split_by_indices(lines, numbered_indices)
+
+    author_indices = [i for i, l in enumerate(lines) if AUTHOR_START_RE.match(l)]
+    if len(author_indices) >= 2:
+        return _split_by_indices(lines, author_indices)
+
+    # Fallback: durch Leerzeilen getrennte Absätze
+    paragraphs, current = [], []
+    for l in lines:
+        if not l.strip():
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+        else:
+            current.append(l.strip())
+    if current:
+        paragraphs.append(" ".join(current))
+    return [p for p in paragraphs if len(p) > 20]
+
+
+def _split_by_indices(lines: list[str], indices: list[int]) -> list[str]:
+    entries = []
+    for start, end in zip(indices, indices[1:] + [len(lines)]):
+        chunk = " ".join(l.strip() for l in lines[start:end])
+        chunk = NUMBERED_LINE.sub("", chunk, count=1)
+        entries.append(chunk.strip())
+    return entries
+
+
+def _parse_entry(number: int, raw: str) -> Citation:
+    citation = Citation(number=number, raw_text=raw)
+
+    year_match = YEAR_RE.search(raw)
+    if year_match:
+        citation.year = year_match.group(1)
+
+    doi_match = DOI_RE.search(raw)
+    if doi_match:
+        citation.doi = doi_match.group(1).rstrip(".")
+
+    pages_match = PAGES_RE.search(raw)
+    if pages_match:
+        groups = [g for g in pages_match.groups() if g]
+        if groups:
+            citation.pages = "-".join(groups[:2]) if len(groups) > 1 else groups[0]
+
+    # Autoren: Text vor der Jahreszahl (oder vor dem ersten Punkt, falls kein Jahr)
+    if year_match:
+        citation.authors = raw[: year_match.start()].strip(" .,(")
+    else:
+        first_period = raw.find(". ")
+        citation.authors = raw[:first_period].strip(" .,") if first_period > 0 else None
+
+    # Titel: zwischen Jahr und nächstem Satzende (Punkt gefolgt von Großbuchstabe oder Ende)
+    if year_match:
+        rest = raw[year_match.end():].strip(" .,)")
+        title_match = re.search(r"^(.*?)(?:\.\s|\.$)", rest)
+        citation.title = (title_match.group(1) if title_match else rest[:200]).strip()
+
+    return citation
