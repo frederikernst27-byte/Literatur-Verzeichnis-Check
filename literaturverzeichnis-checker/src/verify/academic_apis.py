@@ -4,6 +4,7 @@ und Fuzzy-Matching gegen die geparste Zitatangabe. Kein API-Key nötig.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import requests
@@ -126,8 +127,13 @@ def find_best_candidate(title: str, authors: str | None = None) -> tuple[Candida
         return None, 0.0
 
     candidates: list[Candidate] = []
-    for query_fn in (query_crossref, query_openalex, query_semantic_scholar):
-        candidates.extend(query_fn(title))
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(query_fn, title)
+            for query_fn in (query_crossref, query_openalex, query_semantic_scholar)
+        ]
+        for future in futures:
+            candidates.extend(future.result())
 
     cited_authors = re_split_authors(authors) if authors else []
 

@@ -4,6 +4,7 @@ Wird sowohl von cli.py als auch von email_bot.py genutzt.
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from .classify import classify
 from .export_excel import export_to_excel
@@ -35,8 +36,7 @@ def run_pipeline(
     text = extract_text(pdf_path, start_page, end_page)
     citations = parse_citations(text)
 
-    results = []
-    for citation in citations:
+    def verify_one(citation):
         candidate, score = academic_apis.find_best_candidate(
             citation.title or citation.raw_text, citation.authors
         )
@@ -50,9 +50,13 @@ def run_pipeline(
         if use_ai and provider and (not candidate or score < 80):
             ai_result = provider.search_citation(citation.raw_text)
 
-        results.append(classify(citation, candidate, score, api_discrepancies, ai_result))
+        return classify(citation, candidate, score, api_discrepancies, ai_result)
 
-    return results
+    if not citations:
+        return []
+
+    with ThreadPoolExecutor(max_workers=min(8, len(citations))) as executor:
+        return list(executor.map(verify_one, citations))
 
 
 def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
