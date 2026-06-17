@@ -48,6 +48,43 @@ def test_splits_long_paragraph_with_multiple_years_into_entries():
     assert citations[2].year == "2015"
 
 
+def test_doi_fragment_merged_into_preceding_entry():
+    # Simulates a page-number line like "915. https://doi.org/..." being treated
+    # as a numbered entry and then merged back into the preceding citation.
+    text = (
+        "1. Ahlund S (2013) Is pelvic floor training effective. Acta Obstet 92(8):909–\n"
+        "915. https://doi.org/10.1111/aogs.12173\n"
+        "2. Smith J (2019) Another study. Some Journal 5(1):1–10.\n"
+    )
+    citations = parse_citations(text)
+    assert len(citations) == 2
+    assert "doi.org" in citations[0].raw_text
+
+
+def test_authors_and_affiliations_stripped():
+    text = (
+        "1. Alewijnse D (2001) Pelvic floor re-education. BJU Int 88:887–893. "
+        "https://doi.org/10.1046/j.1464-410X.2001.02427.x (PubMed PMID: 11851626)\n"
+        "Authors and Affiliations\n"
+        "Institute of Gynecology, University Hospital, Berlin, Germany\n"
+        "2. Beer M (2025) Effect of postpartum pessary. Arch Gynecol Obstet 311:1209.\n"
+    )
+    citations = parse_citations(text)
+    assert len(citations) == 2
+    assert "Authors and Affiliations" not in citations[0].raw_text
+
+
+def test_publishers_note_stripped():
+    text = (
+        "1. Elenskaia K (2011) The greatest risk for prolapse. Int Urogynecol J 22(10):1207. "
+        "https://doi.org/10.1007/s00192-011-1501-5\n"
+        "Publisher's Note Springer Nature remains neutral with regard to jurisdictional claims.\n"
+    )
+    citations = parse_citations(text)
+    assert len(citations) == 1
+    assert "Publisher" not in citations[0].raw_text
+
+
 def test_does_not_split_running_prose_with_single_year_mention():
     prose = (
         "Dies ist ein langer Fließtext über ein Thema, der zufällig irgendwo mittendrin "

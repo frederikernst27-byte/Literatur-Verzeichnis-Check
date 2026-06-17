@@ -16,6 +16,15 @@ DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
 AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
 
+# Boilerplate-Blöcke, die Springer/Elsevier PDFs an Zitate anhängen
+_BOILERPLATE_END_RE = re.compile(
+    r"\s*\bAuthors?\s+and\s+Affiliations?\b.*$"
+    r"|\s*\bPublisher['’]?s?\s+Note\b.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+# DOI/URL-Fragment-Zeile (entsteht wenn Seitenzahl + DOI-Zeile als eigener Eintrag erkannt wird)
+_DOI_FRAGMENT_RE = re.compile(r"^(?:https?://|10\.\d{4})", re.IGNORECASE)
+
 
 @dataclass
 class Citation:
@@ -34,6 +43,22 @@ def parse_citations(text: str) -> list[Citation]:
     return [_parse_entry(i + 1, entry) for i, entry in enumerate(entries)]
 
 
+def _clean_entries(entries: list[str]) -> list[str]:
+    """Strip boilerplate suffixes and merge DOI/URL continuation fragments."""
+    cleaned = [_BOILERPLATE_END_RE.sub("", e).strip() for e in entries]
+
+    result: list[str] = []
+    for entry in cleaned:
+        if not entry:
+            continue
+        # Fragment without year that starts with a URL or bare DOI → merge into prev entry
+        if result and _DOI_FRAGMENT_RE.match(entry) and not YEAR_RE.search(entry):
+            result[-1] = result[-1] + " " + entry
+        else:
+            result.append(entry)
+    return result
+
+
 def _split_entries(text: str) -> list[str]:
     lines = [l for l in text.splitlines()]
     # Kopfzeilen wie "Literaturverzeichnis" / Seitenzahlen-Zeilen rauswerfen
@@ -41,11 +66,11 @@ def _split_entries(text: str) -> list[str]:
 
     numbered_indices = [i for i, l in enumerate(lines) if NUMBERED_LINE.match(l)]
     if len(numbered_indices) >= 2:
-        return _split_by_indices(lines, numbered_indices)
+        return _clean_entries(_split_by_indices(lines, numbered_indices))
 
     author_indices = [i for i, l in enumerate(lines) if AUTHOR_START_RE.match(l)]
     if len(author_indices) >= 2:
-        return _split_by_indices(lines, author_indices)
+        return _clean_entries(_split_by_indices(lines, author_indices))
 
     # Fallback: durch Leerzeilen getrennte Absätze
     paragraphs, current = [], []
@@ -68,7 +93,7 @@ def _split_entries(text: str) -> list[str]:
     result = []
     for p in paragraphs:
         result.extend(_split_long_paragraph(p) if len(p) > 800 else [p])
-    return result
+    return _clean_entries(result)
 
 
 def _split_long_paragraph(paragraph: str) -> list[str]:
