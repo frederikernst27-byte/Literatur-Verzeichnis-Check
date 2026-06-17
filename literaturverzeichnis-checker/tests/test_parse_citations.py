@@ -85,3 +85,91 @@ def test_trims_trailing_running_header_from_last_citation():
     assert len(citations) == 2
     assert "Archives of Gynecology and Obstetrics" not in citations[1].raw_text
     assert "Levels of pelvic floor support" in citations[1].raw_text
+
+
+BULLET_TEXT = """• Müller, A. (2020). Maschinelles Lernen in der Praxis. Springer, S. 12-34.
+
+• Smith, J. (2018). Deep Learning for NLP. Journal of AI Research, 45(2), 100-120.
+"""
+
+
+def test_parses_bulleted_entries():
+    citations = parse_citations(BULLET_TEXT)
+    assert len(citations) == 2
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+
+
+PAREN_NUMBERED_TEXT = """(1) Müller, A. (2020). Maschinelles Lernen in der Praxis. Springer, S. 12-34.
+
+(2) Smith, J. (2018). Deep Learning for NLP. Journal of AI Research, 45(2), 100-120.
+"""
+
+
+def test_parses_parenthesized_numbered_entries():
+    citations = parse_citations(PAREN_NUMBERED_TEXT)
+    assert len(citations) == 2
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+
+
+VANCOUVER_TEXT = """Mueller A, Schmidt B (2020) Machine learning approaches in practice. Springer J 12:34.
+
+Smith J, Jones K (2018) Deep learning for natural language processing. AI Res 45:100.
+"""
+
+
+def test_parses_vancouver_style_initials_first_authors():
+    citations = parse_citations(VANCOUVER_TEXT)
+    assert len(citations) == 2
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+
+
+PARTICLE_SURNAME_TEXT = """van der Berg, A. (2020). Eine Untersuchung zu einem Thema. Springer, S. 12-34.
+
+von Neumann, J. (2018). Eine weitere Untersuchung zu einem Thema. Wiley, S. 21-40.
+"""
+
+
+def test_parses_particle_surname_authors():
+    citations = parse_citations(PARTICLE_SURNAME_TEXT)
+    assert len(citations) == 2
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+
+
+NO_NUMBERING_NO_BLANK_LINES_TEXT = """Müller and Schmidt (2020) wrote about a topic that is described
+here in more detail across this line. Springer, S. 1-20.
+Smith and Jones (2018) wrote about another topic that is described
+here as well across this line. Wiley, S. 21-40.
+Weber and Klein (2015) wrote about yet another topic described
+here too across this line. Academic, S. 41-60.
+"""
+
+
+def test_splits_entries_without_blank_lines_using_year_boundary_heuristic():
+    # Reproduziert den urspruenglichen "1 Zeile in Excel"-Bug: weder
+    # Nummerierung noch Autoren-Komma-Muster noch Leerzeilen vorhanden, aber
+    # jede Zeile sieht wie ein Autorenanfang aus und der Text davor enthaelt
+    # bereits ein Jahr.
+    citations = parse_citations(NO_NUMBERING_NO_BLANK_LINES_TEXT)
+    assert len(citations) == 3
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+    assert citations[2].year == "2015"
+
+
+def test_splits_long_paragraph_with_bare_unparenthesized_years():
+    filler = "mit vielen weiteren Worten die hier nur der Mindestlaenge wegen aneinandergereiht werden. " * 3
+    text = (
+        f"Mueller A. 2020. Erste Quelle zu einem Thema {filler}Verlag, S. 1-20. "
+        f"Schmidt B. 2018. Zweite Quelle zu einem anderen Thema {filler}Anderer Verlag, S. 21-40. "
+        f"Weber C. 2015. Dritte Quelle zu einem weiteren Thema {filler}Dritter Verlag, S. 41-60."
+    )
+    assert len(text) > 800
+    citations = parse_citations(text)
+    assert len(citations) == 3
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+    assert citations[2].year == "2015"

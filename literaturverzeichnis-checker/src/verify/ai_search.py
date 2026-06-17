@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 import requests
 
@@ -33,6 +34,15 @@ Antworte AUSSCHLIESSLICH als JSON-Objekt mit genau diesen Feldern:
 
 
 @dataclass
+class GroundingSource:
+    """Eine echte, von der Such-API bestätigte Quelle (z.B. Gemini-Grounding
+    oder OpenRouter-`:online`-Annotation) - im Gegensatz zum selbst-berichteten
+    'url'-Feld in AIResult, das das Modell frei erfinden (halluzinieren) kann."""
+    url: str
+    title: str | None = None
+
+
+@dataclass
 class AIResult:
     found: bool
     title: str | None
@@ -40,6 +50,7 @@ class AIResult:
     year: str | None
     url: str | None
     notes: str | None
+    grounding_sources: list[GroundingSource] = field(default_factory=list)
 
 
 class AIProviderError(RuntimeError):
@@ -73,8 +84,10 @@ class OpenRouterProvider:
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return _parse_ai_json(content)
+        message = resp.json()["choices"][0]["message"]
+        result = _parse_ai_json(message["content"])
+        result.grounding_sources = _extract_openrouter_grounding_sources(message)
+        return result
 
 
 class GeminiProvider:
@@ -94,8 +107,55 @@ class GeminiProvider:
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
-        content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return _parse_ai_json(content)
+        candidate = resp.json()["candidates"][0]
+        content = candidate["content"]["parts"][0]["text"]
+        result = _parse_ai_json(content)
+        result.grounding_sources = _extract_gemini_grounding_sources(candidate)
+        return result
+
+
+_DOI_URL_RE = re.compile(r"doi\.org/(10\.\d{4,9}/[^\s?#]+)", re.IGNORECASE)
+
+
+def extract_doi_from_url(url: str) -> str | None:
+    """Versucht, eine DOI aus einer Grounding-URL zu extrahieren. Deckt
+    doi.org-Links direkt ab. Verlagsseiten ohne DOI im URL-Pfad würden einen
+    zusätzlichen HTTP-Request zur Seite erfordern - das bleibt bewusst
+    außerhalb des Scopes dieser ersten Ausbaustufe."""
+    match = _DOI_URL_RE.search(url)
+    return match.group(1).rstrip(".,)") if match else None
+
+
+def _extract_gemini_grounding_sources(candidate: dict) -> list[GroundingSource]:
+    """Extrahiert die ECHTEN, von der Google-Suche bestätigten Treffer aus der
+    groundingMetadata - im Gegensatz zum 'url'-Feld der vom Modell selbst
+    erzeugten JSON-Antwort, das frei erfunden sein kann. Diese Quellen sind
+    die Grundlage für die DOI-Bestätigung bzw. die 'Vorschlag, bitte prüfen'-
+    Einstufung in classify.py."""
+    grounding = candidate.get("groundingMetadata") or {}
+    chunks = grounding.get("groundingChunks") or []
+    sources = []
+    for chunk in chunks:
+        web = chunk.get("web") or {}
+        uri = web.get("uri")
+        if uri:
+            sources.append(GroundingSource(url=uri, title=web.get("title")))
+    return sources
+
+
+def _extract_openrouter_grounding_sources(message: dict) -> list[GroundingSource]:
+    """Analoges Gegenstück zu _extract_gemini_grounding_sources: OpenRouter-
+    `:online`-Modelle liefern echte Quellenangaben als 'annotations' vom Typ
+    'url_citation' statt Grounding-Metadaten."""
+    sources = []
+    for annotation in message.get("annotations") or []:
+        if annotation.get("type") != "url_citation":
+            continue
+        citation = annotation.get("url_citation") or {}
+        url = citation.get("url")
+        if url:
+            sources.append(GroundingSource(url=url, title=citation.get("title")))
+    return sources
 
 
 def _parse_ai_json(content: str) -> AIResult:

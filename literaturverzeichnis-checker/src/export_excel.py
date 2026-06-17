@@ -5,13 +5,21 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .classify import STATUS_MINOR_ISSUES, STATUS_NOT_FOUND, STATUS_OK, STATUS_UNCLEAR, Result
+from .classify import (
+    STATUS_AI_SUGGESTION,
+    STATUS_MINOR_ISSUES,
+    STATUS_NOT_FOUND,
+    STATUS_OK,
+    STATUS_UNCLEAR,
+    Result,
+)
 
 STATUS_COLORS = {
     STATUS_OK: "C6EFCE",
     STATUS_MINOR_ISSUES: "FFEB9C",
     STATUS_NOT_FOUND: "FFC7CE",
     STATUS_UNCLEAR: "D9D9D9",
+    STATUS_AI_SUGGESTION: "BDD7EE",
 }
 
 HEADERS = [

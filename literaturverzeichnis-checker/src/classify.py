@@ -7,6 +7,7 @@ STATUS_OK = "Gefunden - korrekt"
 STATUS_MINOR_ISSUES = "Gefunden - Abweichungen"
 STATUS_NOT_FOUND = "Nicht gefunden - vermutlich halluziniert"
 STATUS_UNCLEAR = "Unklar - manuelle Pruefung empfohlen"
+STATUS_AI_SUGGESTION = "KI-Vorschlag - bitte manuell pruefen"
 
 API_SOURCE_LABELS = {
     "crossref": "CrossRef",
@@ -57,26 +58,47 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
         )
 
     if ai_result is not None:
-        if ai_result.found:
-            found_source = f"{ai_result.title or '?'} ({ai_result.year or '?'})"
-            if ai_result.url:
-                found_source += f" - {ai_result.url}"
-            notes = [ai_result.notes] if ai_result.notes else []
-            status = STATUS_MINOR_ISSUES if notes else STATUS_OK
+        notes = [ai_result.notes] if ai_result.notes else []
+        has_grounding = bool(ai_result.grounding_sources)
+
+        if ai_result.found and has_grounding:
+            # KI behauptet einen Treffer UND es gibt echte (nicht selbst-
+            # berichtete) Quellenlinks aus der Grounding-Suche - aber ohne
+            # DOI-Bestätigung (die wäre bereits zuvor in pipeline.py als
+            # regulärer API-Treffer mit Score 100 abgehandelt worden, dieser
+            # Zweig wird dann gar nicht erreicht). Das ist ein Vorschlag zur
+            # manuellen Prüfung, kein bestätigter Treffer.
+            links = "; ".join(s.url for s in ai_result.grounding_sources[:3])
+            found_source = f"{ai_result.title or '?'} ({ai_result.year or '?'}) - mögliche Quelle(n): {links}"
             return Result(
                 number=citation.number,
                 original_citation=citation.raw_text,
-                status=status,
+                status=STATUS_AI_SUGGESTION,
                 found_source=found_source,
-                discrepancies=notes,
-                method="KI-Websuche",
-                confidence=60.0,
+                discrepancies=notes + ["KI hat möglicherweise passende Quelle gefunden, bitte manuell prüfen"],
+                method="KI-Websuche (mit Quellenangabe)",
+                confidence=55.0,
             )
+
+        if ai_result.found and not has_grounding:
+            # KI behauptet "gefunden", aber die Grounding-Metadaten enthalten
+            # keine echten Quellenlinks - die Behauptung ist nicht
+            # verifizierbar und könnte eine Halluzination sein. Nicht als
+            # "korrekt" durchwinken.
+            return Result(
+                number=citation.number,
+                original_citation=citation.raw_text,
+                status=STATUS_UNCLEAR,
+                discrepancies=notes + ["KI behauptet einen Treffer, aber ohne echte Quellenangabe (Grounding) - Behauptung nicht überprüfbar"],
+                method="KI-Websuche (unbestätigt)",
+                confidence=30.0,
+            )
+
         return Result(
             number=citation.number,
             original_citation=citation.raw_text,
             status=STATUS_NOT_FOUND,
-            discrepancies=[ai_result.notes] if ai_result.notes else [],
+            discrepancies=notes,
             method="KI-Websuche",
             confidence=40.0,
         )

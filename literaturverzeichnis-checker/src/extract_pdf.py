@@ -9,13 +9,17 @@ import pdfplumber
 SECTION_HEADINGS = (
     "literaturverzeichnis",
     "literatur",
+    "literaturliste",
     "quellenverzeichnis",
+    "quellen",
     "references",
     "reference list",
+    "cited references",
     "bibliography",
     "bibliografie",
     "bibliographie",
     "works cited",
+    "literature cited",
 )
 
 # Überschriften, ab denen das Literaturverzeichnis typischerweise endet.
@@ -64,7 +68,12 @@ def _detect_column_boundary(words: list[dict], page_width: float) -> float | Non
         return None
     left = sum(1 for w in words if w["x1"] <= best_x)
     right = sum(1 for w in words if w["x0"] >= best_x)
-    if left > 20 and right > 20:
+    # Schwelle bewusst niedrig genug, dass auch kürzere zweispaltige
+    # Literaturseiten (z.B. die letzte Teilseite eines Verzeichnisses) noch
+    # als zweispaltig erkannt werden, statt in page.extract_text() zu
+    # zerfallen und Spalten zu vermischen.
+    MIN_COLUMN_WORDS = 8
+    if left > MIN_COLUMN_WORDS and right > MIN_COLUMN_WORDS:
         return best_x
     return None
 
@@ -160,11 +169,13 @@ def _auto_extract_bibliography(pdf) -> str:
 
     start_idx = start_candidates[-1]
 
+    # Nur bei einer echten STOP_HEADINGS-Überschrift abbrechen. Ein erneuter
+    # SECTION_HEADINGS-Treffer (z.B. eine wiederkehrende Kopfzeile oder ein
+    # späteres Kapitel mit ähnlichem Titel) würde sonst das Literaturverzeichnis
+    # vorzeitig abschneiden.
     end_idx = len(page_texts)
     for i in range(start_idx + 1, len(page_texts)):
-        if _find_heading_line(page_texts[i], STOP_HEADINGS) or _find_heading_line(
-            page_texts[i], SECTION_HEADINGS
-        ):
+        if _find_heading_line(page_texts[i], STOP_HEADINGS):
             end_idx = i
             break
 

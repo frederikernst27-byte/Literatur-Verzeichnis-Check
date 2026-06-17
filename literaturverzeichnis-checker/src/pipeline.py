@@ -11,6 +11,7 @@ from .export_excel import export_to_excel
 from .extract_pdf import extract_text
 from .parse_citations import parse_citations
 from .verify import academic_apis
+from .verify import ai_search
 from .verify.ai_search import AIProviderError, get_ai_provider
 
 
@@ -49,6 +50,21 @@ def run_pipeline(
         ai_result = None
         if use_ai and provider and (not candidate or score < 80):
             ai_result = provider.search_citation(citation.raw_text)
+            # Statt der Selbstauskunft des Modells blind zu vertrauen: prüfen,
+            # ob eine der echten Grounding-Quellen eine DOI enthält, und diese
+            # bei CrossRef bestätigen. Bei Erfolg läuft das Ergebnis wie ein
+            # regulärer API-Treffer mit Score 100 weiter (classify.py braucht
+            # dafür keine Sonderbehandlung).
+            for source in ai_result.grounding_sources:
+                doi = ai_search.extract_doi_from_url(source.url)
+                if not doi:
+                    continue
+                confirmed = academic_apis.query_crossref_by_doi(doi)
+                if confirmed:
+                    candidate, score = confirmed, 100.0
+                    api_discrepancies = academic_apis.compare_to_citation(citation, confirmed, 100.0)
+                    ai_result = None
+                    break
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
 

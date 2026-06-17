@@ -10,11 +10,28 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-NUMBERED_LINE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)[.)])\s+")
+# Neben "[1]"/"1."/"1)" auch "(1)" sowie Aufzählungszeichen (Bullets,
+# Gedankenstriche) als Listeneinleitung erkennen. Eine nackte Zahl ohne
+# Satzzeichen wird bewusst nicht ergänzt, da das zu leicht mit Fließtext-
+# Zahlen (Jahreszahlen, Seitenangaben am Zeilenanfang) kollidiert.
+NUMBERED_LINE = re.compile(r"^\s*(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)]|[•‣▪◦]|[-–—](?=\s))\s+")
 YEAR_RE = re.compile(r"\(?\b(1[89]\d{2}|20\d{2})[a-z]?\b\)?")
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
-AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
+
+# Autorenanfang einer Zeile - deckt neben "Nachname, X." auch "X. Nachname"
+# (Initialen zuerst), "Nachname X" (Vancouver-Stil ohne Komma) und
+# Namenspartikel ("van der Berg, A.") ab. Das Gate `len(author_indices) >= 2`
+# in _split_entries schützt vor False Positives der Vancouver-Variante, die
+# isoliert auch auf zufällige Großbuchstaben-Kürzel in Fließtext passen könnte.
+_NAME_PARTICLES = r"(?:van|von|de|den|der|del|di|le|la)\s+"
+AUTHOR_START_RE = re.compile(
+    r"^(?:"
+    rf"(?:{_NAME_PARTICLES}){{0,2}}[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]"
+    r"|[A-ZÄÖÜ]\.\s*[A-ZÄÖÜ][\wÀ-ÿ'\-]+"
+    r"|[A-ZÄÖÜ][\wÀ-ÿ'\-]+\s+[A-ZÄÖÜ]{1,3}(?:\s|,|\()"
+    r")"
+)
 
 # Ein "Eintrag", der nach dem Splitten nur aus einem DOI-/URL-Rest besteht,
 # ist keine eigene Quelle - er wurde vermutlich durch einen Spalten- oder
@@ -68,6 +85,15 @@ def _split_entries(text: str) -> list[str]:
     if len(author_indices) >= 2:
         return _postprocess_entries(_split_by_indices(lines, author_indices))
 
+    # Weder Nummerierung noch Autoren-Komma-Muster über den ganzen Text hinweg
+    # gefunden. Bevor wir auf Leerzeilen-Absätze zurückfallen (die bei vielen
+    # PDF-Extraktionen zwischen Zitaten schlicht fehlen, weil pdfplumber keinen
+    # zusätzlichen Zeilenumbruch einfügt), versuchen wir eine zeilenbasierte
+    # Grenzerkennung ohne Leerzeilen-Pflicht.
+    boundary_indices = _find_entry_boundaries_without_blank_lines(lines)
+    if len(boundary_indices) >= 2:
+        return _postprocess_entries(_split_by_indices(lines, boundary_indices))
+
     # Fallback: durch Leerzeilen getrennte Absätze
     paragraphs, current = [], []
     for l in lines:
@@ -90,6 +116,31 @@ def _split_entries(text: str) -> list[str]:
     for p in paragraphs:
         result.extend(_split_long_paragraph(p) if len(p) > 800 else [p])
     return _postprocess_entries(result)
+
+
+_LOOSE_ENTRY_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+[, ]")
+
+
+def _find_entry_boundaries_without_blank_lines(lines: list[str]) -> list[int]:
+    """Erkennt Eintragsgrenzen ohne Leerzeilen: eine Zeile beginnt vermutlich
+    einen neuen Eintrag, wenn sie wie ein Autorenname aussieht (großgeschriebenes
+    Wort am Zeilenanfang) UND der seit der letzten Grenze gesammelte Text bereits
+    eine Jahreszahl enthält - d.h. der vorherige Eintrag wirkt inhaltlich
+    abgeschlossen. Reine Großschreibung allein reicht nicht (Titelzeilen/
+    Verlagsnamen beginnen auch groß), das Jahres-Kriterium verhindert,
+    Eintragsinneres fälschlich als Grenze zu werten. Die erste Zeile gilt
+    immer als Beginn des ersten Eintrags."""
+    if not lines:
+        return []
+    boundaries = [0]
+    text_since_last_boundary = lines[0]
+    for i, line in enumerate(lines[1:], start=1):
+        if _LOOSE_ENTRY_START_RE.match(line) and YEAR_RE.search(text_since_last_boundary):
+            boundaries.append(i)
+            text_since_last_boundary = line
+        else:
+            text_since_last_boundary += " " + line
+    return boundaries
 
 
 def _postprocess_entries(entries: list[str]) -> list[str]:
@@ -128,7 +179,15 @@ def _is_orphan_fragment(entry: str) -> bool:
 
 
 def _split_long_paragraph(paragraph: str) -> list[str]:
-    year_starts = [m.start() for m in re.finditer(r"(?<![\d(])\(?(1[89]\d{2}|20\d{2})[a-z]?\)", paragraph)]
+    # Die schließende Klammer muss optional sein wie die öffnende - sonst
+    # fallen Zitierstile mit unparenthetisierten Jahreszahlen (z.B. Vancouver-
+    # Stil "Müller A. 2020.") komplett durch, und der gesamte überlange Absatz
+    # bleibt als EIN einziger Eintrag stehen. Der Lookahead grenzt echte
+    # Jahresangaben von zufälligen 4-stelligen Zahlen in Seitenangaben/ISBNs ab.
+    year_starts = [
+        m.start()
+        for m in re.finditer(r"(?<![\d(])\(?(1[89]\d{2}|20\d{2})[a-z]?\)?(?=[.,;\s]|$)", paragraph)
+    ]
     if len(year_starts) < 2:
         return [paragraph]
 
