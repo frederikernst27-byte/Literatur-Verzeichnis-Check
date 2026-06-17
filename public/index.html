@@ -155,8 +155,9 @@
   </footer>
 </main>
 
-<script type="module">
-import { upload } from 'https://esm.sh/@vercel/blob@0.27.0/client';
+<script>
+// Alle Event-Listener werden sofort registriert – kein Top-Level-Import
+// der bei CDN-Ausfall die gesamte Seite einfrieren würde.
 
 const form       = document.getElementById('check-form');
 const dropzone   = document.getElementById('dropzone');
@@ -275,7 +276,14 @@ form.addEventListener('submit', async (e) => {
 
   try {
     const file = pdfInput.files[0];
-    const blob = await upload(file.name, file, {
+    let uploadFn;
+    try {
+      const mod = await import('https://esm.sh/@vercel/blob@0.27.0/client');
+      uploadFn = mod.upload;
+    } catch {
+      throw new Error('Upload-Bibliothek konnte nicht geladen werden. Bitte Seite neu laden.');
+    }
+    const blob = await uploadFn(file.name, file, {
       access: 'public',
       handleUploadUrl: '/api/blob-upload',
     });
