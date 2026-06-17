@@ -35,6 +35,35 @@ def _safe_get(url: str, **kwargs):
         return None
 
 
+def query_crossref_by_doi(doi: str) -> Candidate | None:
+    """Exakter Lookup über die CrossRef-DOI-API. Liefert bei Erfolg einen
+    eindeutigen Treffer zurück - kein Fuzzy-Matching nötig, da der DOI das
+    Werk eindeutig identifiziert."""
+    data = _safe_get(f"https://api.crossref.org/works/{doi}")
+    if not data:
+        return None
+    item = data.get("message")
+    if not item:
+        return None
+    authors = [
+        f"{a.get('given', '')} {a.get('family', '')}".strip()
+        for a in item.get("author", [])
+    ]
+    year = None
+    date_parts = item.get("issued", {}).get("date-parts", [[None]])
+    if date_parts and date_parts[0]:
+        year = str(date_parts[0][0]) if date_parts[0][0] else None
+    return Candidate(
+        source_api="crossref",
+        title=(item.get("title") or [""])[0],
+        authors=authors,
+        year=year,
+        doi=item.get("DOI"),
+        venue=(item.get("container-title") or [None])[0],
+        url=item.get("URL"),
+    )
+
+
 def query_crossref(title: str, rows: int = 3) -> list[Candidate]:
     data = _safe_get(
         "https://api.crossref.org/works",
@@ -116,14 +145,41 @@ def query_semantic_scholar(title: str, limit: int = 3) -> list[Candidate]:
     return out
 
 
-def find_best_candidate(title: str, authors: str | None = None) -> tuple[Candidate | None, float]:
+def get_all_candidates(title: str) -> list[Candidate]:
+    """Gibt alle Kandidaten aus allen drei APIs zurück – wird als Kontext für die KI genutzt."""
+    if not title or len(title.strip()) < 5:
+        return []
+    candidates: list[Candidate] = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(query_fn, title)
+            for query_fn in (query_crossref, query_openalex, query_semantic_scholar)
+        ]
+        for future in futures:
+            candidates.extend(future.result())
+    return candidates
+
+
+def find_best_candidate(
+    title: str, authors: str | None = None, doi: str | None = None
+) -> tuple[Candidate | None, float]:
     """Fragt alle drei APIs ab und gibt den plausibelsten Kandidaten zurück
     (zusammen mit dem Titel-Ähnlichkeits-Score 0-100).
+
+    Ist ein DOI bekannt, wird zuerst ein exakter Lookup darüber versucht -
+    das ist zuverlässiger als Fuzzy-Titelsuche und liefert bei Erfolg Score
+    100. Nur wenn das fehlschlägt (oder kein DOI vorliegt), wird auf die
+    Fuzzy-Suche über alle drei APIs zurückgefallen.
 
     Die Auswahl gewichtet Titel- UND Autoren-Ähnlichkeit, damit bei mehreren
     ähnlich betitelten Treffern (z.B. unterschiedliche Paper mit ähnlichem
     Titel) nicht versehentlich der falsche als Treffer gilt.
     """
+    if doi:
+        doi_match = query_crossref_by_doi(doi)
+        if doi_match:
+            return doi_match, 100.0
+
     if not title or len(title.strip()) < 5:
         return None, 0.0
 

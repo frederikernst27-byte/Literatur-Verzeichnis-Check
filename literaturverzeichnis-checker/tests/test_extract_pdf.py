@@ -88,3 +88,17 @@ def test_words_to_text_groups_lines_and_preserves_reading_order():
         _word("line", 110, 140, 0),
     ]
     assert _words_to_text(words) == "First line\nSecond line"
+
+
+def test_words_to_text_merges_tightly_kerned_doi_fragments():
+    # pdfplumber kann ein einzelnes Wort wie "doi.org/10.1016/s0378-5122"
+    # bei engem Kerning faelschlich in mehrere "Woerter" mit winzigen
+    # Luecken aufspalten - diese muessen wieder zusammengefuehrt werden,
+    # waehrend ein echter Wortzwischenraum erhalten bleibt.
+    words = [
+        _word("https://d", 50, 80, 0),
+        _word("oi.o", 80.5, 95, 0),
+        _word("rg/10.1016/s0378-5122", 95.4, 160, 0),
+        _word("(PubMed)", 165, 200, 0),
+    ]
+    assert _words_to_text(words) == "https://doi.org/10.1016/s0378-5122 (PubMed)"

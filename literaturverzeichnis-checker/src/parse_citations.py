@@ -16,17 +16,20 @@ DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
 AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
 
-# Boilerplate-Blöcke, die Springer/Elsevier PDFs an Zitate anhängen:
-# - "Authors and Affiliations" / "Publisher’s Note" Blöcke
-# - Laufende Buchkapitel-Kopfzeilen (kein Jahr, kein Komma, Titelform),
-#   die am Ende einer Seite hinter dem letzten Zitat stehen
-_BOILERPLATE_END_RE = re.compile(
-    r"\s*\bAuthors?\s+and\s+Affiliations?\b.*$"
-    r"|\s*\bPublisher\W?s?\s+Note\b.*$",
-    re.IGNORECASE | re.DOTALL,
+# Ein "Eintrag", der nach dem Splitten nur aus einem DOI-/URL-Rest besteht,
+# ist keine eigene Quelle - er wurde vermutlich durch einen Spalten- oder
+# Seitenumbruch von der eigentlichen Quellenangabe losgerissen.
+_ORPHAN_FRAGMENT_RE = re.compile(r"^(?:https?://)?[\w.\-/():]+$")
+
+# Laufende Kopfzeilen (Zeitschriftenname + Jahrgang/Seiten) oder
+# "Authors and Affiliations"/"Publisher's Note"-Blöcke, die beim Seitenumbruch
+# an die letzte Quellenangabe einer Seite angehängt werden.
+_TRAILING_GARBAGE_RE = re.compile(
+    r"[A-ZÄÖÜ][\w &\-]+\s\(20\d{2}\)\s*\d+:\d+[\-–]\d+"
+    r"|Authors? and Affiliations\b"
+    r"|Publisher'?s Note\b",
+    re.IGNORECASE,
 )
-# DOI/URL-Fragment-Zeile (entsteht wenn Seitenzahl + DOI-Zeile als eigener Eintrag erkannt wird)
-_DOI_FRAGMENT_RE = re.compile(r"^(?:https?://|10\.\d{4})", re.IGNORECASE)
 
 
 @dataclass
@@ -46,22 +49,6 @@ def parse_citations(text: str) -> list[Citation]:
     return [_parse_entry(i + 1, entry) for i, entry in enumerate(entries)]
 
 
-def _clean_entries(entries: list[str]) -> list[str]:
-    """Strip boilerplate suffixes and merge DOI/URL continuation fragments."""
-    cleaned = [_BOILERPLATE_END_RE.sub("", e).strip() for e in entries]
-
-    result: list[str] = []
-    for entry in cleaned:
-        if not entry:
-            continue
-        # Fragment without year that starts with a URL or bare DOI → merge into prev entry
-        if result and _DOI_FRAGMENT_RE.match(entry) and not YEAR_RE.search(entry):
-            result[-1] = result[-1] + " " + entry
-        else:
-            result.append(entry)
-    return result
-
-
 def _split_entries(text: str) -> list[str]:
     lines = [l for l in text.splitlines()]
     # Reine Seitenzahlen rauswerfen
@@ -69,11 +56,11 @@ def _split_entries(text: str) -> list[str]:
 
     numbered_indices = [i for i, l in enumerate(lines) if NUMBERED_LINE.match(l)]
     if len(numbered_indices) >= 2:
-        return _clean_entries(_split_by_indices(lines, numbered_indices))
+        return _postprocess_entries(_split_by_indices(lines, numbered_indices))
 
     author_indices = [i for i, l in enumerate(lines) if AUTHOR_START_RE.match(l)]
     if len(author_indices) >= 2:
-        return _clean_entries(_split_by_indices(lines, author_indices))
+        return _postprocess_entries(_split_by_indices(lines, author_indices))
 
     # Fallback: durch Leerzeilen getrennte Absätze
     paragraphs, current = [], []
@@ -96,7 +83,42 @@ def _split_entries(text: str) -> list[str]:
     result = []
     for p in paragraphs:
         result.extend(_split_long_paragraph(p) if len(p) > 800 else [p])
-    return _clean_entries(result)
+    return _postprocess_entries(result)
+
+
+def _postprocess_entries(entries: list[str]) -> list[str]:
+    """Räumt typische Artefakte von Seiten-/Spaltenumbrüchen auf: ein
+    abgerissenes DOI/URL-Fragment wird zur vorherigen Quelle gehängt statt
+    als eigener (bedeutungsloser) Eintrag stehen zu bleiben, und laufende
+    Kopfzeilen/'Authors and Affiliations'-Blöcke werden vom Ende des letzten
+    Eintrags abgeschnitten."""
+    merged: list[str] = []
+    for entry in entries:
+        stripped = entry.strip()
+        if merged and _is_orphan_fragment(stripped):
+            merged[-1] = f"{merged[-1]} {stripped}"
+        else:
+            merged.append(entry)
+
+    if merged:
+        garbage_match = _TRAILING_GARBAGE_RE.search(merged[-1])
+        if garbage_match:
+            merged[-1] = merged[-1][: garbage_match.start()].strip()
+
+    return merged
+
+
+def _is_orphan_fragment(entry: str) -> bool:
+    """True, wenn `entry` kein eigenständiges Zitat ist, sondern nur ein
+    losgerissenes DOI-/URL-Fragment (kein Leerzeichen, kein Jahr, kein
+    Autorenanfang, aber Ziffern + Punkt/Schrägstrich-typisch für DOIs)."""
+    if not entry or " " in entry or len(entry) > 60:
+        return False
+    if YEAR_RE.search(entry) or AUTHOR_START_RE.match(entry):
+        return False
+    return bool(re.search(r"\d", entry)) and bool(re.search(r"[./]", entry)) and bool(
+        _ORPHAN_FRAGMENT_RE.match(entry)
+    )
 
 
 def _split_long_paragraph(paragraph: str) -> list[str]:
@@ -120,12 +142,30 @@ def _split_long_paragraph(paragraph: str) -> list[str]:
     return [e for e in entries if len(e) > 20]
 
 
+_NUMBERED_PREFIX_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
+
+
 def _split_by_indices(lines: list[str], indices: list[int]) -> list[str]:
-    entries = []
-    for start, end in zip(indices, indices[1:] + [len(lines)]):
-        chunk = " ".join(l.strip() for l in lines[start:end])
-        chunk = NUMBERED_LINE.sub("", chunk, count=1)
-        entries.append(chunk.strip())
+    raw_chunks = [
+        " ".join(l.strip() for l in lines[start:end])
+        for start, end in zip(indices, indices[1:] + [len(lines)])
+    ]
+
+    entries: list[str] = []
+    for chunk in raw_chunks:
+        # Ein verstümmeltes DOI wie "10. 1111/aogs.12173" sieht aus wie ein
+        # nummerierter Listeneintrag ("10."). Bevor die vermeintliche
+        # Nummerierung abgeschnitten wird, prüfen wir, ob Nummer+Rest ohne
+        # das künstliche Leerzeichen ein DOI-/URL-Fragment ergeben - falls ja,
+        # gehört das Fragment (mit erhaltenem "10.") zum vorherigen Eintrag.
+        prefix_match = _NUMBERED_PREFIX_RE.match(chunk)
+        if entries and prefix_match:
+            rejoined = f"{prefix_match.group(1)}.{prefix_match.group(2)}"
+            if _is_orphan_fragment(rejoined):
+                entries[-1] = f"{entries[-1]} {rejoined}"
+                continue
+
+        entries.append(NUMBERED_LINE.sub("", chunk, count=1).strip())
     return entries
 
 

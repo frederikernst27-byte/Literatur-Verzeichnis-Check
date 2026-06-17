@@ -38,16 +38,15 @@ def check():
     start_page = request.form.get("start_page") or request.args.get("start_page") or json_body.get("start_page")
     end_page = request.form.get("end_page") or request.args.get("end_page") or json_body.get("end_page")
 
-    # KI-Modus: use_ai und optionaler Nutzer-Key aus dem Request
+    # KI-Modus: use_ai aus dem Request
     use_ai_raw = json_body.get("use_ai") or request.form.get("use_ai")
     if use_ai_raw is not None:
         use_ai = str(use_ai_raw).lower() in ("true", "1", "yes")
     else:
         use_ai = None  # Pipeline liest USE_AI aus der Umgebung
 
-    # Nutzer-eigener Gemini-Key (nur wenn Server keinen hat)
+    # Nutzer-eigener Gemini-Key (Fallback wenn Server keinen OpenRouter-Key hat)
     gemini_api_key = json_body.get("gemini_api_key") or request.form.get("gemini_api_key") or None
-    # Sicherheit: leeren String ignorieren
     if gemini_api_key is not None:
         gemini_api_key = gemini_api_key.strip() or None
 
@@ -76,6 +75,7 @@ def check():
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
                 use_ai=use_ai,
+                ai_provider="openrouter",
                 gemini_api_key=gemini_api_key,
             )
         except Exception as e:

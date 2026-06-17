@@ -24,7 +24,7 @@ def run_pipeline(
     gemini_api_key: str | None = None,
 ):
     use_ai = use_ai if use_ai is not None else os.environ.get("USE_AI", "false").lower() == "true"
-    ai_provider_name = ai_provider or os.environ.get("AI_PROVIDER", "gemini")
+    ai_provider_name = ai_provider or os.environ.get("AI_PROVIDER", "openrouter")
 
     provider = None
     if use_ai:
@@ -41,14 +41,14 @@ def run_pipeline(
     if not citations:
         return []
 
-    # Zitate ohne API-Treffer werden per KI geprüft – max. 5 total damit
-    # die Vercel-Funktion (60s Limit) nicht ausläuft (je ~20s pro Gemini-Call).
+    # KI-Calls limitieren: max. 5 pro Anfrage damit die Vercel-Funktion (300s) nicht ausläuft
     _ai_lock = threading.Lock()
     _ai_calls = [0]
 
     def verify_one(citation):
+        search_title = citation.title or citation.raw_text
         candidate, score = academic_apis.find_best_candidate(
-            citation.title or citation.raw_text, citation.authors
+            search_title, citation.authors, citation.doi
         )
         api_discrepancies = (
             academic_apis.compare_to_citation(citation, candidate, score)
@@ -63,7 +63,8 @@ def run_pipeline(
                 if allowed:
                     _ai_calls[0] += 1
             if allowed:
-                ai_result = provider.search_citation(citation.raw_text)
+                all_candidates = academic_apis.get_all_candidates(search_title)
+                ai_result = provider.search_citation(citation.raw_text, api_candidates=all_candidates)
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
 
@@ -78,5 +79,5 @@ def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
 
 
 def has_server_ai_key() -> bool:
-    """Prüft ob ein Gemini-Key auf dem Server konfiguriert ist."""
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    """Prüft ob ein KI-Key auf dem Server konfiguriert ist (OpenRouter oder Gemini)."""
+    return bool(os.environ.get("OPENROUTER_API_KEY") or os.environ.get("GEMINI_API_KEY"))
