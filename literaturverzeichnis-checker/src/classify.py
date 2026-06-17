@@ -87,7 +87,7 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
                 status=status,
                 found_source=found_source,
                 discrepancies=notes,
-                method="KI-Websuche (Gemini)",
+                method="KI-Websuche (OpenRouter)",
                 confidence=confidence,
                 url=_make_url(ai_result=ai_result, citation=citation),
             )
@@ -96,7 +96,7 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
             original_citation=citation.raw_text,
             status=STATUS_NOT_FOUND,
             discrepancies=[ai_result.notes] if ai_result.notes else [],
-            method="KI-Websuche (Gemini)",
+            method="KI-Websuche (OpenRouter)",
             confidence=35.0,
             url=_make_url(citation=citation),
         )

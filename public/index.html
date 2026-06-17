@@ -78,7 +78,7 @@
 </style>
 </head>
 <body>
-<div class="version-badge">v1.5.0</div>
+<div class="version-badge">v1.6.0</div>
 <main>
   <h1>Literaturverzeichnis-Checker</h1>
   <p class="lead">
@@ -210,8 +210,8 @@ async function fetchKeyStatus() {
     serverHasKey = data.hasKey;
     if (serverHasKey) {
       aiStatus.className = 'ai-badge ok';
-      aiStatus.textContent = '✓ Server-Key konfiguriert – KI sofort einsatzbereit';
-      aiKeyGroup.style.display = 'none';
+      aiStatus.textContent = '✓ Server-Key konfiguriert – eigener Key optional (überschreibt Server-Key)';
+      aiKeyGroup.style.display = 'block';
     } else {
       aiStatus.className = 'ai-badge warn';
       aiStatus.textContent = '⚠ Kein Server-Key – eigenen Key eingeben';
@@ -253,19 +253,24 @@ form.addEventListener('submit', async (e) => {
 
   const useAi = aiToggle.checked;
 
-  // Key-Validierung wenn KI aktiv und kein Server-Key
+  // Key-Validierung: Pflicht wenn kein Server-Key, optional wenn vorhanden
+  const enteredKey = aiKeyInput.value.trim();
   if (useAi && !serverHasKey) {
-    const key = aiKeyInput.value.trim();
-    if (!key) {
+    if (!enteredKey) {
       setStatus('Bitte einen OpenRouter API-Key eintragen oder KI-Modus deaktivieren.', 'error');
       aiKeyInput.focus();
       return;
     }
-    if (!key.startsWith('sk-or-') || key.length < 20) {
+    if (!enteredKey.startsWith('sk-or-') || enteredKey.length < 20) {
       setStatus('Der eingegebene Key sieht ungültig aus (sollte mit "sk-or-" beginnen).', 'error');
       aiKeyInput.focus();
       return;
     }
+  }
+  if (useAi && enteredKey && (!enteredKey.startsWith('sk-or-') || enteredKey.length < 20)) {
+    setStatus('Der eingegebene Key sieht ungültig aus (sollte mit "sk-or-" beginnen).', 'error');
+    aiKeyInput.focus();
+    return;
   }
 
   setStatus('', '');
@@ -296,8 +301,8 @@ form.addEventListener('submit', async (e) => {
       ...(startPage && { start_page: startPage }),
       ...(endPage   && { end_page:   endPage }),
     };
-    if (useAi && !serverHasKey) {
-      body.openrouter_api_key = aiKeyInput.value.trim();
+    if (useAi && enteredKey) {
+      body.openrouter_api_key = enteredKey;
     }
 
     const res = await fetch('/api/check', {
