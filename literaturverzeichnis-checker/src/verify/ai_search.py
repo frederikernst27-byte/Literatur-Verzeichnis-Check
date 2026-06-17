@@ -116,9 +116,9 @@ class OpenRouterProvider:
         if not self.api_key:
             raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
-    def search_citation(self, citation_text: str, api_candidates=None) -> AIResult:
-        # Füge :online hinzu damit OpenRouter Websuche aktiviert
-        model = self.model if self.model.endswith(":online") else f"{self.model}:online"
+    def search_citation(self, citation_text: str, api_candidates=None, web_search: bool = True) -> AIResult:
+        base = self.model.removesuffix(":online")
+        model = f"{base}:online" if web_search else base
         candidates_block = _format_api_candidates(api_candidates or [])
         prompt = PROMPT_TEMPLATE.format(
             citation=citation_text,
@@ -147,19 +147,19 @@ class GeminiProvider:
         if not self.api_key:
             raise AIProviderError("GEMINI_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
-    def search_citation(self, citation_text: str, api_candidates=None) -> AIResult:
+    def search_citation(self, citation_text: str, api_candidates=None, web_search: bool = True) -> AIResult:
         candidates_block = _format_api_candidates(api_candidates or [])
         prompt = PROMPT_TEMPLATE.format(
             citation=citation_text,
             api_candidates_block=candidates_block,
         )
+        body: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+        if web_search:
+            body["tools"] = [{"google_search": {}}]
         resp = requests.post(
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
             params={"key": self.api_key},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "tools": [{"google_search": {}}],
-            },
+            json=body,
             timeout=TIMEOUT,
         )
         resp.raise_for_status()

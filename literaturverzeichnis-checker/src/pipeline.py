@@ -65,7 +65,11 @@ def run_pipeline(
                     _ai_calls[0] += 1
             if allowed:
                 all_candidates = academic_apis.get_all_candidates(search_title)
-                ai_result = provider.search_citation(citation.raw_text, api_candidates=all_candidates)
+                # Websuche nur wenn keine Datenbankeinträge vorhanden (spart Kosten)
+                web_search = len(all_candidates) == 0
+                ai_result = provider.search_citation(
+                    citation.raw_text, api_candidates=all_candidates, web_search=web_search
+                )
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
 
