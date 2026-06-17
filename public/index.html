@@ -82,7 +82,9 @@
   </footer>
 </main>
 
-<script>
+<script type="module">
+import { upload } from 'https://esm.sh/@vercel/blob@0.27.0/client';
+
 const form = document.getElementById('check-form');
 const dropzone = document.getElementById('dropzone');
 const pdfInput = document.getElementById('pdf-input');
@@ -120,21 +122,31 @@ form.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<span class="spinner"></span> Wird geprüft - kann bei vielen Zitaten etwas dauern...';
 
-  const formData = new FormData();
-  formData.append('pdf', pdfInput.files[0]);
   const startPage = document.getElementById('start-page').value;
   const endPage = document.getElementById('end-page').value;
-  if (startPage) formData.append('start_page', startPage);
-  if (endPage) formData.append('end_page', endPage);
 
   try {
-    const res = await fetch('/api/check', { method: 'POST', body: formData });
+    const file = pdfInput.files[0];
+    const blob = await upload(file.name, file, {
+      access: 'public',
+      handleUploadUrl: '/api/blob-upload',
+    });
+
+    const res = await fetch('/api/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        blob_url: blob.url,
+        start_page: startPage || undefined,
+        end_page: endPage || undefined,
+      }),
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'Prüfung fehlgeschlagen.');
     }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    const resultBlob = await res.blob();
+    const url = URL.createObjectURL(resultBlob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'literaturpruefung.xlsx';
