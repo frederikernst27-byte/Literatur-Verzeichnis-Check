@@ -64,12 +64,15 @@ def run_pipeline(
                 if allowed:
                     _ai_calls[0] += 1
             if allowed:
-                all_candidates = academic_apis.get_all_candidates(search_title)
-                # Websuche nur wenn keine Datenbankeinträge vorhanden (spart Kosten)
-                web_search = len(all_candidates) == 0
-                ai_result = provider.search_citation(
-                    citation.raw_text, api_candidates=all_candidates, web_search=web_search
-                )
+                try:
+                    all_candidates = academic_apis.get_all_candidates(search_title)
+                    # Websuche nur wenn keine Datenbankeinträge vorhanden (spart Kosten)
+                    web_search = len(all_candidates) == 0
+                    ai_result = provider.search_citation(
+                        citation.raw_text, api_candidates=all_candidates, web_search=web_search
+                    )
+                except (AIProviderError, Exception):
+                    ai_result = None  # KI-Fehler ignorieren, Zitat normal klassifizieren
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
 
