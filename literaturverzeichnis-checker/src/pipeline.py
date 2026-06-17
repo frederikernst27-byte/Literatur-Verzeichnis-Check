@@ -42,7 +42,7 @@ def run_pipeline(
     if not citations:
         return []
 
-    # KI-Calls limitieren: max. 40 pro Anfrage damit die Vercel-Funktion (300s) nicht ausläuft
+    # KI-Calls limitieren: max. 15 pro Anfrage damit die Vercel-Funktion (300s) nicht ausläuft
     _ai_lock = threading.Lock()
     _ai_calls = [0]
 
@@ -60,7 +60,7 @@ def run_pipeline(
         ai_result = None
         if use_ai and provider and (not candidate or score < 80):
             with _ai_lock:
-                allowed = _ai_calls[0] < 40
+                allowed = _ai_calls[0] < 15
                 if allowed:
                     _ai_calls[0] += 1
             if allowed:

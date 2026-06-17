@@ -305,11 +305,16 @@ form.addEventListener('submit', async (e) => {
       body.openrouter_api_key = enteredKey;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 270000); // 270s Frontend-Timeout
+
     const res = await fetch('/api/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -323,7 +328,10 @@ form.addEventListener('submit', async (e) => {
     URL.revokeObjectURL(url);
     setStatus('Fertig – Excel-Datei wurde heruntergeladen.', 'success');
   } catch (err) {
-    setStatus(err.message, 'error');
+    const msg = err.name === 'AbortError'
+      ? 'Timeout: Die Prüfung hat zu lange gedauert. Versuche weniger Seiten oder deaktiviere die KI.'
+      : err.message;
+    setStatus(msg, 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Prüfen & Excel herunterladen';
