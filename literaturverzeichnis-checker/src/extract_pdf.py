@@ -69,6 +69,23 @@ def _detect_column_boundary(words: list[dict], page_width: float) -> float | Non
     return None
 
 
+def _join_line_words(line_words: list[dict], gap_threshold: float = 2.0) -> str:
+    """Fügt die Wörter einer Zeile zu Text zusammen. Bei manchen PDFs (enges
+    Kerning, kleine Schrift in URLs/DOIs) erkennt pdfplumber ein einzelnes
+    Wort fälschlich als mehrere 'Wörter' mit winzigen Lücken dazwischen
+    (z.B. 'doi.org/10.1016/...' wird zu 'd', 'oi.o', 'rg/1', '0.1016/...').
+    Liegt die Lücke zwischen zwei Wörtern deutlich unter einem normalen
+    Wortzwischenraum, werden sie ohne Leerzeichen zusammengeführt."""
+    if not line_words:
+        return ""
+    parts = [line_words[0]["text"]]
+    for prev, cur in zip(line_words, line_words[1:]):
+        gap = cur["x0"] - prev["x1"]
+        parts.append("" if gap < gap_threshold else " ")
+        parts.append(cur["text"])
+    return "".join(parts)
+
+
 def _words_to_text(words: list[dict], line_tolerance: float = 3) -> str:
     if not words:
         return ""
@@ -82,10 +99,10 @@ def _words_to_text(words: list[dict], line_tolerance: float = 3) -> str:
             current.append(w)
             bucket = b
         else:
-            lines.append(" ".join(x["text"] for x in current))
+            lines.append(_join_line_words(current))
             current, bucket = [w], b
     if current:
-        lines.append(" ".join(x["text"] for x in current))
+        lines.append(_join_line_words(current))
     return "\n".join(lines)
 
 

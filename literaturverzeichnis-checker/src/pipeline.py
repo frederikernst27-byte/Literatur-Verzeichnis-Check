@@ -38,7 +38,7 @@ def run_pipeline(
 
     def verify_one(citation):
         candidate, score = academic_apis.find_best_candidate(
-            citation.title or citation.raw_text, citation.authors
+            citation.title or citation.raw_text, citation.authors, citation.doi
         )
         api_discrepancies = (
             academic_apis.compare_to_citation(citation, candidate, score)
