@@ -75,7 +75,8 @@ def check():
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
                 use_ai=use_ai,
-                ai_provider="openrouter",
+                # Bevorzuge OpenRouter (Gemini 2.5 Flash), falle auf Gemini direkt zurück
+                ai_provider="openrouter" if os.environ.get("OPENROUTER_API_KEY") else "gemini",
                 gemini_api_key=gemini_api_key,
             )
         except Exception as e:

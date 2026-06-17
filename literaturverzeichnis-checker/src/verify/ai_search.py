@@ -134,7 +134,10 @@ class OpenRouterProvider:
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        if not content:
+            raise AIProviderError(f"OpenRouter lieferte leere Antwort: {str(data)[:300]}")
         return _parse_ai_json(content)
 
 
@@ -160,8 +163,15 @@ class GeminiProvider:
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
-        content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return _parse_ai_json(content)
+        data = resp.json()
+        candidate = (data.get("candidates") or [{}])[0]
+        parts = (candidate.get("content") or {}).get("parts") or []
+        # Bei aktivierter Websuche können mehrere Parts zurückkommen; wir nehmen den ersten mit Text
+        text_content = next((p["text"] for p in parts if "text" in p), None)
+        if not text_content:
+            finish = candidate.get("finishReason", "UNKNOWN")
+            raise AIProviderError(f"Gemini lieferte keinen Text (finishReason={finish}): {str(data)[:300]}")
+        return _parse_ai_json(text_content)
 
 
 def _parse_ai_json(content: str) -> AIResult:
