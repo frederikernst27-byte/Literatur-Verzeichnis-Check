@@ -18,7 +18,7 @@ import requests
 if TYPE_CHECKING:
     from .academic_apis import Candidate
 
-TIMEOUT = 15
+TIMEOUT = 25
 
 PROMPT_TEMPLATE = """Du prüfst, ob die folgende Literaturangabe aus einer Abschlussarbeit \
 wirklich existiert.
