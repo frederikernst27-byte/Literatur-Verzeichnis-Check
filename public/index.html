@@ -78,7 +78,7 @@
 </style>
 </head>
 <body>
-<div class="version-badge">v1.4.0</div>
+<div class="version-badge">v1.5.0</div>
 <main>
   <h1>Literaturverzeichnis-Checker</h1>
   <p class="lead">
@@ -116,8 +116,8 @@
               <path d="M12 10v4M8 14h8M7 18h10a2 2 0 0 1 2 2v1H5v-1a2 2 0 0 1 2-2z"/>
             </svg>
             <div>
-              <div class="ai-header-title">KI-Unterstützung (Gemini)</div>
-              <div class="ai-header-desc">Prüft unsichere Quellen zusätzlich mit Google AI</div>
+              <div class="ai-header-title">KI-Unterstützung (OpenRouter)</div>
+              <div class="ai-header-desc">Prüft unsichere Quellen zusätzlich mit Gemini 2.5 Flash</div>
             </div>
           </div>
           <label class="toggle" onclick="event.stopPropagation()">
@@ -128,9 +128,9 @@
         <div class="ai-body" id="ai-body">
           <div id="ai-key-status" class="ai-badge loading">Prüfe Server-Konfiguration…</div>
           <div class="ai-key-group" id="ai-key-group" style="display:none">
-            <label for="ai-key-input">Eigener Gemini API-Key</label>
+            <label for="ai-key-input">Eigener OpenRouter API-Key</label>
             <div class="key-input-wrap">
-              <input type="password" id="ai-key-input" placeholder="AIza..." autocomplete="off" spellcheck="false">
+              <input type="password" id="ai-key-input" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false">
               <button type="button" class="key-toggle-vis" id="key-vis-btn" title="Key anzeigen/verbergen">
                 <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -138,8 +138,8 @@
               </button>
             </div>
             <p class="ai-hint">
-              Kostenloser Key auf <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a> erstellen.
-              Der Key wird nur für diese Anfrage verwendet und nicht gespeichert.
+              Kostenlosen Key auf <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> erstellen.
+              Nutzt Gemini 2.5 Flash mit Websuche. Key wird nur für diese Anfrage verwendet und nicht gespeichert.
             </p>
           </div>
         </div>
@@ -257,12 +257,12 @@ form.addEventListener('submit', async (e) => {
   if (useAi && !serverHasKey) {
     const key = aiKeyInput.value.trim();
     if (!key) {
-      setStatus('Bitte einen Gemini API-Key eintragen oder KI-Modus deaktivieren.', 'error');
+      setStatus('Bitte einen OpenRouter API-Key eintragen oder KI-Modus deaktivieren.', 'error');
       aiKeyInput.focus();
       return;
     }
-    if (!key.startsWith('AI') && key.length < 20) {
-      setStatus('Der eingegebene Key sieht ungültig aus (sollte mit "AI" beginnen).', 'error');
+    if (!key.startsWith('sk-or-') || key.length < 20) {
+      setStatus('Der eingegebene Key sieht ungültig aus (sollte mit "sk-or-" beginnen).', 'error');
       aiKeyInput.focus();
       return;
     }
@@ -297,7 +297,7 @@ form.addEventListener('submit', async (e) => {
       ...(endPage   && { end_page:   endPage }),
     };
     if (useAi && !serverHasKey) {
-      body.gemini_api_key = aiKeyInput.value.trim();
+      body.openrouter_api_key = aiKeyInput.value.trim();
     }
 
     const res = await fetch('/api/check', {

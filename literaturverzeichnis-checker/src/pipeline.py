@@ -21,7 +21,8 @@ def run_pipeline(
     end_page: int | None = None,
     use_ai: bool | None = None,
     ai_provider: str | None = None,
-    gemini_api_key: str | None = None,
+    openrouter_api_key: str | None = None,
+    gemini_api_key: str | None = None,  # legacy, wird ignoriert
 ):
     use_ai = use_ai if use_ai is not None else os.environ.get("USE_AI", "false").lower() == "true"
     ai_provider_name = ai_provider or os.environ.get("AI_PROVIDER", "openrouter")
@@ -29,7 +30,7 @@ def run_pipeline(
     provider = None
     if use_ai:
         try:
-            provider = get_ai_provider(ai_provider_name, api_key=gemini_api_key)
+            provider = get_ai_provider(ai_provider_name, api_key=openrouter_api_key)
         except AIProviderError as e:
             raise AIProviderError(
                 f"KI-Fallback ist aktiviert, kann aber nicht initialisiert werden: {e}"

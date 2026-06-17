@@ -89,7 +89,7 @@ class AIProviderError(RuntimeError):
 
 def get_ai_provider(name: str, api_key: str | None = None):
     if name == "openrouter":
-        return OpenRouterProvider()
+        return OpenRouterProvider(api_key=api_key)
     if name == "gemini":
         return GeminiProvider(api_key=api_key)
     raise AIProviderError(f"Unbekannter AI_PROVIDER: {name}")
@@ -110,11 +110,11 @@ def _extract_json_from_text(text: str) -> str:
 
 
 class OpenRouterProvider:
-    def __init__(self):
-        self.api_key = os.environ.get("OPENROUTER_API_KEY")
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         self.model = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
         if not self.api_key:
-            raise AIProviderError("OPENROUTER_API_KEY fehlt in der .env")
+            raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
     def search_citation(self, citation_text: str, api_candidates=None) -> AIResult:
         # Füge :online hinzu damit OpenRouter Websuche aktiviert

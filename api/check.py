@@ -45,10 +45,14 @@ def check():
     else:
         use_ai = None  # Pipeline liest USE_AI aus der Umgebung
 
-    # Nutzer-eigener Gemini-Key (Fallback wenn Server keinen OpenRouter-Key hat)
-    gemini_api_key = json_body.get("gemini_api_key") or request.form.get("gemini_api_key") or None
-    if gemini_api_key is not None:
-        gemini_api_key = gemini_api_key.strip() or None
+    # Nutzer-eigener OpenRouter-Key (Fallback wenn Server keinen Key hat)
+    openrouter_api_key = (
+        json_body.get("openrouter_api_key") or request.form.get("openrouter_api_key")
+        or json_body.get("gemini_api_key") or request.form.get("gemini_api_key")  # legacy
+        or None
+    )
+    if openrouter_api_key is not None:
+        openrouter_api_key = openrouter_api_key.strip() or None
 
     with tempfile.TemporaryDirectory() as tmp:
         pdf_path = os.path.join(tmp, "input.pdf")
@@ -75,9 +79,8 @@ def check():
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
                 use_ai=use_ai,
-                # Bevorzuge OpenRouter (Gemini 2.5 Flash), falle auf Gemini direkt zurück
-                ai_provider="openrouter" if os.environ.get("OPENROUTER_API_KEY") else "gemini",
-                gemini_api_key=gemini_api_key,
+                ai_provider="openrouter",
+                openrouter_api_key=openrouter_api_key,
             )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
