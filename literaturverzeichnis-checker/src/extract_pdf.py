@@ -43,8 +43,14 @@ def _heading_match(line: str, headings: tuple[str, ...]) -> bool:
     return candidate in headings
 
 
-def _find_heading_line(text: str, headings: tuple[str, ...], max_lines: int = 5) -> bool:
-    lines = [l for l in text.splitlines()[:max_lines] if l.strip()]
+def _find_heading_line(text: str, headings: tuple[str, ...]) -> bool:
+    """Sucht in ALLEN Zeilen einer Seite nach einer Kapitelüberschrift.
+
+    Früher wurden nur die ersten 5 Zeilen durchsucht, was bei Buchkapiteln
+    mit mehrzeiligen laufenden Kopfzeilen (z.B. Springer-Bände) zuverlässig
+    die echte "References"-Überschrift verfehlt hat.
+    """
+    lines = [l for l in text.splitlines() if l.strip()]
     return any(_heading_match(line, headings) for line in lines)
 
 

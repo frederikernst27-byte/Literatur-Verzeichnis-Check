@@ -16,10 +16,13 @@ DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
 AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
 
-# Boilerplate-Blöcke, die Springer/Elsevier PDFs an Zitate anhängen
+# Boilerplate-Blöcke, die Springer/Elsevier PDFs an Zitate anhängen:
+# - "Authors and Affiliations" / "Publisher’s Note" Blöcke
+# - Laufende Buchkapitel-Kopfzeilen (kein Jahr, kein Komma, Titelform),
+#   die am Ende einer Seite hinter dem letzten Zitat stehen
 _BOILERPLATE_END_RE = re.compile(
     r"\s*\bAuthors?\s+and\s+Affiliations?\b.*$"
-    r"|\s*\bPublisher['’]?s?\s+Note\b.*$",
+    r"|\s*\bPublisher\W?s?\s+Note\b.*$",
     re.IGNORECASE | re.DOTALL,
 )
 # DOI/URL-Fragment-Zeile (entsteht wenn Seitenzahl + DOI-Zeile als eigener Eintrag erkannt wird)
@@ -61,7 +64,7 @@ def _clean_entries(entries: list[str]) -> list[str]:
 
 def _split_entries(text: str) -> list[str]:
     lines = [l for l in text.splitlines()]
-    # Kopfzeilen wie "Literaturverzeichnis" / Seitenzahlen-Zeilen rauswerfen
+    # Reine Seitenzahlen rauswerfen
     lines = [l for l in lines if l.strip() and not re.fullmatch(r"\d+", l.strip())]
 
     numbered_indices = [i for i, l in enumerate(lines) if NUMBERED_LINE.match(l)]

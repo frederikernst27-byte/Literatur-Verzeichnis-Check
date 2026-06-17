@@ -30,7 +30,8 @@ def test_heading_match_rejects_word_inside_running_prose():
     assert not _heading_match(sentence_en, SECTION_HEADINGS)
 
 
-def test_find_heading_line_only_checks_top_lines():
+def test_find_heading_line_rejects_prose_mentioning_heading_word():
+    # "Literatur" inside a normal sentence must not be treated as a heading
     page_with_prose_heading = (
         "Kapitel 5\n"
         "Diese Seite handelt von einem Thema, das auch in der Literatur diskutiert wird.\n"
@@ -38,6 +39,21 @@ def test_find_heading_line_only_checks_top_lines():
     )
     assert not _find_heading_line(page_with_prose_heading, SECTION_HEADINGS)
 
+
+def test_find_heading_line_finds_heading_below_running_header():
+    # Book-chapter pages: running header + page number + blank + "References"
+    # Previously only the first 5 lines were checked, missing the heading.
+    page = (
+        "On the Development of the BPM Governance Matrix: The Case of Endress+Hauser\n"
+        "237\n"
+        "\n"
+        "References\n"
+        "Costello, T. (2012). RACI. IT Professional, 14(2), 64–63.\n"
+    )
+    assert _find_heading_line(page, SECTION_HEADINGS)
+
+
+def test_find_heading_line_finds_heading_at_top():
     page_with_real_heading = "Literaturverzeichnis\n\nMüller, A. (2020). Titel. Verlag.\n"
     assert _find_heading_line(page_with_real_heading, SECTION_HEADINGS)
     assert not _find_heading_line(page_with_real_heading, STOP_HEADINGS)
