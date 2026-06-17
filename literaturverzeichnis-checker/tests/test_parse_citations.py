@@ -31,3 +31,28 @@ def test_parses_apa_style_entries():
 def test_extracts_pages():
     citations = parse_citations(NUMBERED_TEXT)
     assert citations[0].pages is not None
+
+
+def test_splits_long_paragraph_with_multiple_years_into_entries():
+    filler = "mit vielen weiteren Worten die hier nur der Mindestlaenge wegen aneinandergereiht werden. " * 3
+    text = (
+        f"Müller, A. (2020). Erste Quelle zu einem Thema {filler}Verlag, S. 1-20. "
+        f"Schmidt, B. (2018). Zweite Quelle zu einem anderen Thema {filler}Anderer Verlag, S. 21-40. "
+        f"Weber, C. (2015). Dritte Quelle zu einem weiteren Thema {filler}Dritter Verlag, S. 41-60."
+    )
+    assert len(text) > 800
+    citations = parse_citations(text)
+    assert len(citations) == 3
+    assert citations[0].year == "2020"
+    assert citations[1].year == "2018"
+    assert citations[2].year == "2015"
+
+
+def test_does_not_split_running_prose_with_single_year_mention():
+    prose = (
+        "Dies ist ein langer Fließtext über ein Thema, der zufällig irgendwo mittendrin "
+        "eine Klammer mit einer Jahreszahl enthält (Quelle: Müller et al., 2022), aber "
+        "ansonsten keine echte Literaturangabe ist."
+    )
+    citations = parse_citations(prose)
+    assert len(citations) == 1

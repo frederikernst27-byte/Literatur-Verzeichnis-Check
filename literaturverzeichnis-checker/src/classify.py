@@ -8,6 +8,13 @@ STATUS_MINOR_ISSUES = "Gefunden - Abweichungen"
 STATUS_NOT_FOUND = "Nicht gefunden - vermutlich halluziniert"
 STATUS_UNCLEAR = "Unklar - manuelle Pruefung empfohlen"
 
+API_SOURCE_LABELS = {
+    "crossref": "CrossRef",
+    "openalex": "OpenAlex",
+    "semanticscholar": "Semantic Scholar",
+}
+APIS_CHECKED = "CrossRef, OpenAlex, Semantic Scholar"
+
 
 @dataclass
 class Result:
@@ -26,7 +33,8 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
     ai_result: AIResult|None aus ai_search, nur gesetzt wenn KI-Fallback lief.
     """
     if api_match and api_score >= 80:
-        found_source = f"{api_match.title} ({api_match.year or '?'}) [{api_match.source_api}]"
+        api_label = API_SOURCE_LABELS.get(api_match.source_api, api_match.source_api)
+        found_source = f"{api_match.title} ({api_match.year or '?'}) [{api_label}]"
         if api_match.doi:
             found_source += f" DOI: {api_match.doi}"
         if api_discrepancies:
@@ -36,7 +44,7 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
                 status=STATUS_MINOR_ISSUES,
                 found_source=found_source,
                 discrepancies=api_discrepancies,
-                method="API",
+                method=f"API ({api_label})",
                 confidence=api_score,
             )
         return Result(
@@ -44,7 +52,7 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
             original_citation=citation.raw_text,
             status=STATUS_OK,
             found_source=found_source,
-            method="API",
+            method=f"API ({api_label})",
             confidence=api_score,
         )
 
@@ -74,13 +82,14 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
         )
 
     if api_match and api_score >= 50:
+        api_label = API_SOURCE_LABELS.get(api_match.source_api, api_match.source_api)
         return Result(
             number=citation.number,
             original_citation=citation.raw_text,
             status=STATUS_UNCLEAR,
-            found_source=f"{api_match.title} ({api_match.year or '?'}) [{api_match.source_api}]",
+            found_source=f"{api_match.title} ({api_match.year or '?'}) [{api_label}]",
             discrepancies=[f"Nur unsichere Titel-Ähnlichkeit ({api_score:.0f}%) gefunden"],
-            method="API",
+            method=f"API ({api_label}, schwach)",
             confidence=api_score,
         )
 
@@ -88,6 +97,6 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
         number=citation.number,
         original_citation=citation.raw_text,
         status=STATUS_NOT_FOUND,
-        method="API",
-        confidence=0.0,
+        method=f"API ({APIS_CHECKED} geprüft, kein Treffer)",
+        confidence=round(api_score, 1) if api_match else 0.0,
     )

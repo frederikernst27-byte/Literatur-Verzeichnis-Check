@@ -1,6 +1,8 @@
 """PDF -> Rohtext des Literaturverzeichnisses."""
 from __future__ import annotations
 
+import re
+
 import pdfplumber
 
 # Überschriften, ab denen typischerweise das Literaturverzeichnis beginnt.
@@ -9,9 +11,11 @@ SECTION_HEADINGS = (
     "literatur",
     "quellenverzeichnis",
     "references",
+    "reference list",
     "bibliography",
     "bibliografie",
     "bibliographie",
+    "works cited",
 )
 
 # Überschriften, ab denen das Literaturverzeichnis typischerweise endet.
@@ -22,6 +26,26 @@ STOP_HEADINGS = (
     "selbstständigkeitserklärung",
     "abbildungsverzeichnis",
 )
+
+# Eine Zeile gilt nur als Kapitelüberschrift, wenn sie - bis auf führende
+# Nummerierung ("5", "5.1)", Seitenzahl am Ende und Satzzeichen - exakt einem
+# der Heading-Begriffe entspricht. Das verhindert False Positives, wenn das
+# Wort "Literatur"/"references" zufällig in einem normalen Fließtext-Satz
+# vorkommt (z.B. "...zeigt die Literatur, dass...").
+_LEADING_NUMBERING_RE = re.compile(r"^\s*\d+(\.\d+)*[.)]?\s*")
+_TRAILING_PAGE_NUM_RE = re.compile(r"[\s.\-–—]*\d{1,4}\s*$")
+
+
+def _heading_match(line: str, headings: tuple[str, ...]) -> bool:
+    candidate = _LEADING_NUMBERING_RE.sub("", line)
+    candidate = _TRAILING_PAGE_NUM_RE.sub("", candidate)
+    candidate = candidate.strip(" .:-–—").lower()
+    return candidate in headings
+
+
+def _find_heading_line(text: str, headings: tuple[str, ...], max_lines: int = 5) -> bool:
+    lines = [l for l in text.splitlines()[:max_lines] if l.strip()]
+    return any(_heading_match(line, headings) for line in lines)
 
 
 def extract_text(pdf_path: str, start_page: int | None = None, end_page: int | None = None) -> str:
@@ -43,22 +67,26 @@ def extract_text(pdf_path: str, start_page: int | None = None, end_page: int | N
 def _auto_extract_bibliography(pdf) -> str:
     page_texts = [p.extract_text() or "" for p in pdf.pages]
 
-    start_idx = None
-    for i, text in enumerate(page_texts):
-        first_lines = "\n".join(text.splitlines()[:3]).lower()
-        if any(h in first_lines for h in SECTION_HEADINGS):
-            start_idx = i
-            break
+    # Mehrere Treffer sind möglich (z.B. Inhaltsverzeichnis-Eintrag oder pro
+    # Kapitel ein eigenes Literaturverzeichnis bei Sammelbänden). Der letzte
+    # Treffer vor Dokumentende liegt am wahrscheinlichsten beim tatsächlichen,
+    # finalen Literaturverzeichnis einer Abschlussarbeit.
+    start_candidates = [
+        i for i, text in enumerate(page_texts) if _find_heading_line(text, SECTION_HEADINGS)
+    ]
 
-    if start_idx is None:
+    if not start_candidates:
         # Konnte keine Überschrift finden -> ganzes Dokument zurückgeben,
         # parse_citations.py filtert dann selbst grob.
         return "\n".join(page_texts)
 
+    start_idx = start_candidates[-1]
+
     end_idx = len(page_texts)
     for i in range(start_idx + 1, len(page_texts)):
-        first_lines = "\n".join(page_texts[i].splitlines()[:3]).lower()
-        if any(h in first_lines for h in STOP_HEADINGS):
+        if _find_heading_line(page_texts[i], STOP_HEADINGS) or _find_heading_line(
+            page_texts[i], SECTION_HEADINGS
+        ):
             end_idx = i
             break
 

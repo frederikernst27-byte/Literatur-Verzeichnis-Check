@@ -41,9 +41,9 @@ def export_to_excel(results: list[Result], output_path: str) -> None:
         ])
         fill_color = STATUS_COLORS.get(r.status)
         if fill_color:
-            ws.cell(row=ws.max_row, column=3).fill = PatternFill(
-                start_color=fill_color, end_color=fill_color, fill_type="solid"
-            )
+            fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
+            for col in range(1, len(HEADERS) + 1):
+                ws.cell(row=ws.max_row, column=col).fill = fill
 
     widths = [6, 50, 28, 45, 45, 14, 12]
     for i, w in enumerate(widths, start=1):

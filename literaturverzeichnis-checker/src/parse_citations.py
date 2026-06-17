@@ -58,7 +58,38 @@ def _split_entries(text: str) -> list[str]:
             current.append(l.strip())
     if current:
         paragraphs.append(" ".join(current))
-    return [p for p in paragraphs if len(p) > 20]
+    paragraphs = [p for p in paragraphs if len(p) > 20]
+
+    # Falls ein "Absatz" ungewöhnlich lang ist (deutlich länger als ein
+    # einzelnes Literaturzitat), handelt es sich vermutlich um Fließtext statt
+    # einer echten Quellenangabe (z.B. wenn keine Leerzeilen erkannt wurden).
+    # Letzter Versuch: anhand wiederkehrender Jahreszahlen-in-Klammern
+    # nachträglich in einzelne Einträge aufteilen.
+    result = []
+    for p in paragraphs:
+        result.extend(_split_long_paragraph(p) if len(p) > 800 else [p])
+    return result
+
+
+def _split_long_paragraph(paragraph: str) -> list[str]:
+    year_starts = [m.start() for m in re.finditer(r"(?<![\d(])\(?(1[89]\d{2}|20\d{2})[a-z]?\)", paragraph)]
+    if len(year_starts) < 2:
+        return [paragraph]
+
+    # Vor jedem Jahr suchen wir den Beginn des vermutlichen Autorennamens
+    # (Großbuchstabe nach Satzende), um den Eintrag dort zu beginnen.
+    boundaries = [0]
+    for pos in year_starts[1:]:
+        search_start = max(boundaries[-1], pos - 120)
+        prefix = paragraph[search_start:pos]
+        match = list(re.finditer(r"(?:^|[.!?]\s+)([A-ZÄÖÜ])", prefix))
+        boundary = search_start + match[-1].start(1) if match else pos
+        if boundary > boundaries[-1]:
+            boundaries.append(boundary)
+
+    boundaries.append(len(paragraph))
+    entries = [paragraph[s:e].strip() for s, e in zip(boundaries, boundaries[1:])]
+    return [e for e in entries if len(e) > 20]
 
 
 def _split_by_indices(lines: list[str], indices: list[int]) -> list[str]:
