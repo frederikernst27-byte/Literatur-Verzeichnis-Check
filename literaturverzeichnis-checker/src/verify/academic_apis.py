@@ -144,6 +144,21 @@ def query_semantic_scholar(title: str, limit: int = 3) -> list[Candidate]:
     return out
 
 
+def get_all_candidates(title: str) -> list[Candidate]:
+    """Gibt alle Kandidaten aus allen drei APIs zurück – wird als Kontext für die KI genutzt."""
+    if not title or len(title.strip()) < 5:
+        return []
+    candidates: list[Candidate] = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(query_fn, title)
+            for query_fn in (query_crossref, query_openalex, query_semantic_scholar)
+        ]
+        for future in futures:
+            candidates.extend(future.result())
+    return candidates
+
+
 def find_best_candidate(
     title: str, authors: str | None = None, doi: str | None = None
 ) -> tuple[Candidate | None, float]:

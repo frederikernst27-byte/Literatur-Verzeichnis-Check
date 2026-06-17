@@ -37,8 +37,9 @@ def run_pipeline(
     citations = parse_citations(text)
 
     def verify_one(citation):
+        search_title = citation.title or citation.raw_text
         candidate, score = academic_apis.find_best_candidate(
-            citation.title or citation.raw_text, citation.authors, citation.doi
+            search_title, citation.authors, citation.doi
         )
         api_discrepancies = (
             academic_apis.compare_to_citation(citation, candidate, score)
@@ -48,7 +49,8 @@ def run_pipeline(
 
         ai_result = None
         if use_ai and provider and (not candidate or score < 80):
-            ai_result = provider.search_citation(citation.raw_text)
+            all_candidates = academic_apis.get_all_candidates(search_title)
+            ai_result = provider.search_citation(citation.raw_text, api_candidates=all_candidates)
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
 

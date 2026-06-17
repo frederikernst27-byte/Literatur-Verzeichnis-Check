@@ -60,7 +60,7 @@ def check():
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
                 use_ai=True,
-                ai_provider="gemini",
+                ai_provider="openrouter",
             )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
