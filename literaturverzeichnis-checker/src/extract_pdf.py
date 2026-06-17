@@ -48,6 +48,67 @@ def _find_heading_line(text: str, headings: tuple[str, ...], max_lines: int = 5)
     return any(_heading_match(line, headings) for line in lines)
 
 
+def _detect_column_boundary(words: list[dict], page_width: float) -> float | None:
+    """Sucht eine vertikale Lücke (Gutter) nahe der Seitenmitte, die auf ein
+    zweispaltiges Layout hindeutet. Gibt None zurück, wenn die Seite
+    einspaltig ist (kein klarer Gutter vorhanden)."""
+    if not words:
+        return None
+    candidates = range(int(page_width * 0.35), int(page_width * 0.65), 5)
+    best_x, best_overlap = None, None
+    for x in candidates:
+        overlap = sum(1 for w in words if w["x0"] < x < w["x1"])
+        if best_overlap is None or overlap < best_overlap:
+            best_overlap, best_x = overlap, x
+    if best_overlap is None or best_overlap > max(2, len(words) * 0.02):
+        return None
+    left = sum(1 for w in words if w["x1"] <= best_x)
+    right = sum(1 for w in words if w["x0"] >= best_x)
+    if left > 20 and right > 20:
+        return best_x
+    return None
+
+
+def _words_to_text(words: list[dict], line_tolerance: float = 3) -> str:
+    if not words:
+        return ""
+    words = sorted(words, key=lambda w: (round(w["top"] / line_tolerance), w["x0"]))
+    lines: list[str] = []
+    current: list[dict] = []
+    bucket = None
+    for w in words:
+        b = round(w["top"] / line_tolerance)
+        if bucket is None or b == bucket:
+            current.append(w)
+            bucket = b
+        else:
+            lines.append(" ".join(x["text"] for x in current))
+            current, bucket = [w], b
+    if current:
+        lines.append(" ".join(x["text"] for x in current))
+    return "\n".join(lines)
+
+
+def _page_text(page) -> str:
+    """Extrahiert Seitentext spaltenbewusst.
+
+    pdfplumbers Standard-`extract_text()` sortiert Wörter primär nach
+    vertikaler Position und reiht bei zweispaltigem Layout (z.B. Fachartikel)
+    Wörter aus linker und rechter Spalte, die zufällig auf derselben Höhe
+    stehen, in einer Zeile aneinander - das zerstört insbesondere
+    Literaturlisten in der zweiten Spalte. Wird ein klarer Spalten-Gutter
+    erkannt, wird stattdessen erst die linke, dann die rechte Spalte
+    extrahiert.
+    """
+    words = page.extract_words()
+    boundary = _detect_column_boundary(words, page.width)
+    if boundary is None:
+        return page.extract_text() or ""
+    left = [w for w in words if w["x0"] < boundary]
+    right = [w for w in words if w["x0"] >= boundary]
+    return _words_to_text(left) + "\n" + _words_to_text(right)
+
+
 def extract_text(pdf_path: str, start_page: int | None = None, end_page: int | None = None) -> str:
     """Extrahiert Rohtext aus dem PDF.
 
@@ -60,12 +121,12 @@ def extract_text(pdf_path: str, start_page: int | None = None, end_page: int | N
             lo = max(start_page - 1, 0)
             hi = end_page if end_page is not None else len(pdf.pages)
             pages = pdf.pages[lo:hi]
-            return "\n".join(p.extract_text() or "" for p in pages)
+            return "\n".join(_page_text(p) for p in pages)
         return _auto_extract_bibliography(pdf)
 
 
 def _auto_extract_bibliography(pdf) -> str:
-    page_texts = [p.extract_text() or "" for p in pdf.pages]
+    page_texts = [_page_text(p) for p in pdf.pages]
 
     # Mehrere Treffer sind möglich (z.B. Inhaltsverzeichnis-Eintrag oder pro
     # Kapitel ein eigenes Literaturverzeichnis bei Sammelbänden). Der letzte

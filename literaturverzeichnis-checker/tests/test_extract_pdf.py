@@ -1,4 +1,15 @@
-from src.extract_pdf import SECTION_HEADINGS, STOP_HEADINGS, _find_heading_line, _heading_match
+from src.extract_pdf import (
+    SECTION_HEADINGS,
+    STOP_HEADINGS,
+    _detect_column_boundary,
+    _find_heading_line,
+    _heading_match,
+    _words_to_text,
+)
+
+
+def _word(text, x0, x1, top):
+    return {"text": text, "x0": x0, "x1": x1, "top": top}
 
 
 def test_heading_match_accepts_plain_heading():
@@ -30,3 +41,34 @@ def test_find_heading_line_only_checks_top_lines():
     page_with_real_heading = "Literaturverzeichnis\n\nMüller, A. (2020). Titel. Verlag.\n"
     assert _find_heading_line(page_with_real_heading, SECTION_HEADINGS)
     assert not _find_heading_line(page_with_real_heading, STOP_HEADINGS)
+
+
+def test_detect_column_boundary_finds_gutter_in_two_column_layout():
+    words = []
+    for row in range(40):
+        words.append(_word("left", 50, 100, row * 12))
+        words.append(_word("right", 320, 370, row * 12))
+    boundary = _detect_column_boundary(words, page_width=595)
+    assert boundary is not None
+    assert 100 < boundary < 320
+
+
+def test_detect_column_boundary_returns_none_for_single_column():
+    # Fließtext deckt die gesamte Zeilenbreite ab (jede Zeile beginnt an
+    # leicht unterschiedlicher Position und reicht über die Seitenmitte
+    # hinaus) - es gibt also keine durchgehende Lücke nahe der Mitte.
+    words = []
+    for row in range(40):
+        start = 50 + (row % 5) * 10
+        words.append(_word("word", start, start + 480, row * 12))
+    assert _detect_column_boundary(words, page_width=595) is None
+
+
+def test_words_to_text_groups_lines_and_preserves_reading_order():
+    words = [
+        _word("Second", 60, 120, 12),
+        _word("line", 130, 160, 12),
+        _word("First", 50, 100, 0),
+        _word("line", 110, 140, 0),
+    ]
+    assert _words_to_text(words) == "First line\nSecond line"
