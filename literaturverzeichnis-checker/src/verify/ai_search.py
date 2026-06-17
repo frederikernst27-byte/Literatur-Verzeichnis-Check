@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import requests
 
-TIMEOUT = 45
+TIMEOUT = 20
 
 PROMPT_TEMPLATE = """Du bist ein wissenschaftlicher Literatur-Checker. Prüfe ob die folgende \
 Literaturangabe aus einer Abschlussarbeit wirklich existiert. Nutze Google Search zum Nachschlagen.

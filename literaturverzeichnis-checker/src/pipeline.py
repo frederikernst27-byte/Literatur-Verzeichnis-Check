@@ -4,6 +4,7 @@ Wird sowohl von cli.py als auch von email_bot.py genutzt.
 from __future__ import annotations
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from .classify import classify
@@ -37,6 +38,14 @@ def run_pipeline(
     text = extract_text(pdf_path, start_page, end_page)
     citations = parse_citations(text)
 
+    if not citations:
+        return []
+
+    # Zitate ohne API-Treffer werden per KI geprüft – max. 5 total damit
+    # die Vercel-Funktion (60s Limit) nicht ausläuft (je ~20s pro Gemini-Call).
+    _ai_lock = threading.Lock()
+    _ai_calls = [0]
+
     def verify_one(citation):
         candidate, score = academic_apis.find_best_candidate(
             citation.title or citation.raw_text, citation.authors
@@ -49,12 +58,14 @@ def run_pipeline(
 
         ai_result = None
         if use_ai and provider and (not candidate or score < 80):
-            ai_result = provider.search_citation(citation.raw_text)
+            with _ai_lock:
+                allowed = _ai_calls[0] < 5
+                if allowed:
+                    _ai_calls[0] += 1
+            if allowed:
+                ai_result = provider.search_citation(citation.raw_text)
 
         return classify(citation, candidate, score, api_discrepancies, ai_result)
-
-    if not citations:
-        return []
 
     with ThreadPoolExecutor(max_workers=min(8, len(citations))) as executor:
         return list(executor.map(verify_one, citations))
