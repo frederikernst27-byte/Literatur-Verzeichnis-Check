@@ -1,11 +1,15 @@
 """Orchestriert: PDF -> Zitate -> Verifikation -> Klassifikation -> Excel.
 Wird sowohl von cli.py als auch von email_bot.py genutzt.
+
+Zweiphasige Verarbeitung:
+  Phase 1 – API: Alle Zitate parallel durch CrossRef/OpenAlex/Semantic Scholar.
+  Phase 2 – KI:  Unsichere Zitate (Score < 80) sortiert nach Score aufsteigend
+                  (schlechteste zuerst), bis zu AI_CALL_LIMIT KI-Calls parallel.
 """
 from __future__ import annotations
 
 import os
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .classify import classify
 from .export_excel import export_to_excel
@@ -13,6 +17,8 @@ from .extract_pdf import extract_text
 from .parse_citations import parse_citations
 from .verify import academic_apis
 from .verify.ai_search import AIProviderError, get_ai_provider
+
+AI_CALL_LIMIT = 40
 
 
 def run_pipeline(
@@ -42,11 +48,8 @@ def run_pipeline(
     if not citations:
         return []
 
-    # KI-Calls limitieren: max. 40 pro Anfrage damit die Vercel-Funktion (300s) nicht ausläuft
-    _ai_lock = threading.Lock()
-    _ai_calls = [0]
-
-    def verify_one(citation):
+    # --- Phase 1: API-Suche für alle Zitate parallel ---
+    def api_lookup(citation):
         search_title = citation.title or citation.raw_text
         candidate, score = academic_apis.find_best_candidate(
             search_title, citation.authors, citation.doi
@@ -56,28 +59,60 @@ def run_pipeline(
             if candidate and score >= 80
             else []
         )
+        return citation, candidate, score, api_discrepancies
 
-        ai_result = None
-        if use_ai and provider and (not candidate or score < 80):
-            with _ai_lock:
-                allowed = _ai_calls[0] < 40
-                if allowed:
-                    _ai_calls[0] += 1
-            if allowed:
-                try:
-                    all_candidates = academic_apis.get_all_candidates(search_title)
-                    # Websuche nur wenn keine Datenbankeinträge vorhanden (spart Kosten)
-                    web_search = len(all_candidates) == 0
-                    ai_result = provider.search_citation(
-                        citation.raw_text, api_candidates=all_candidates, web_search=web_search
-                    )
-                except (AIProviderError, Exception):
-                    ai_result = None  # KI-Fehler ignorieren, Zitat normal klassifizieren
+    workers = min(8, len(citations))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        api_results = list(executor.map(api_lookup, citations))
 
-        return classify(citation, candidate, score, api_discrepancies, ai_result)
+    # --- Phase 2: KI für unsichere Zitate, sortiert nach Score (schlechteste zuerst) ---
+    if not (use_ai and provider):
+        return [classify(cit, cand, score, discrep, None) for cit, cand, score, discrep in api_results]
 
-    with ThreadPoolExecutor(max_workers=min(8, len(citations))) as executor:
-        return list(executor.map(verify_one, citations))
+    # Index beibehalten für Reihenfolge im Excel
+    uncertain = [
+        (idx, cit, cand, score, discrep)
+        for idx, (cit, cand, score, discrep) in enumerate(api_results)
+        if not cand or score < 80
+    ]
+    # Score 0 (kein Treffer) zuerst → bekommt garantiert KI-Slot
+    uncertain.sort(key=lambda x: x[3])
+
+    ai_slots = uncertain[:AI_CALL_LIMIT]
+    no_ai_slots = uncertain[AI_CALL_LIMIT:]
+
+    def ai_lookup(item):
+        idx, citation, candidate, score, api_discrepancies = item
+        search_title = citation.title or citation.raw_text
+        try:
+            all_candidates = academic_apis.get_all_candidates(search_title)
+            web_search = len(all_candidates) == 0
+            ai_result = provider.search_citation(
+                citation.raw_text, api_candidates=all_candidates, web_search=web_search
+            )
+        except Exception:
+            ai_result = None
+        return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
+
+    results: dict[int, object] = {}
+
+    # Certain citations brauchen keine KI
+    for idx, (cit, cand, score, discrep) in enumerate(api_results):
+        if cand and score >= 80:
+            results[idx] = classify(cit, cand, score, discrep, None)
+
+    # Übrig gebliebene uncertain ohne KI-Slot direkt klassifizieren
+    for idx, cit, cand, score, discrep in no_ai_slots:
+        results[idx] = classify(cit, cand, score, discrep, None)
+
+    # KI-Slots parallel verarbeiten
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(ai_lookup, item): item for item in ai_slots}
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results[idx] = result
+
+    return [results[i] for i in range(len(citations))]
 
 
 def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
