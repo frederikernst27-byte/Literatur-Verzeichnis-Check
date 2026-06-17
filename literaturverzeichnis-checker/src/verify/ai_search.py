@@ -2,33 +2,48 @@
 sicheren Treffer liefern. Wird nur genutzt, wenn USE_AI=true gesetzt ist.
 
 Unterstützte Provider:
-- OpenRouter (Default): nutzt ein ":online"-Modell (Websuche via OpenRouter),
-  aktuell z.B. ein kostenloses Modell konfigurierbar über OPENROUTER_MODEL.
-- Gemini: Google AI Studio, Gemini 2.5 Flash mit Search-Grounding.
+- Gemini (Default): Google AI Studio, Gemini 2.5 Flash mit Search-Grounding.
+- OpenRouter: nutzt ein ":online"-Modell (Websuche via OpenRouter).
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 
 import requests
 
-TIMEOUT = 30
+TIMEOUT = 45
 
-PROMPT_TEMPLATE = """Du prüfst, ob die folgende Literaturangabe aus einer Abschlussarbeit \
-wirklich existiert. Suche im Web danach.
+PROMPT_TEMPLATE = """Du bist ein wissenschaftlicher Literatur-Checker. Prüfe ob die folgende \
+Literaturangabe aus einer Abschlussarbeit wirklich existiert. Nutze Google Search zum Nachschlagen.
 
 Literaturangabe: "{citation}"
 
-Antworte AUSSCHLIESSLICH als JSON-Objekt mit genau diesen Feldern:
+Wichtige Hinweise:
+- Autorenkürzel wie "Schutze S" können Umlaute enthalten (z.B. "Schütze S")
+- ±1 Jahr Abweichung ist normal (Online-first vs. Druckausgabe)
+- Suche auch nach DOI wenn angegeben
+
+Antworte AUSSCHLIESSLICH als JSON-Objekt mit genau diesen Feldern (kein Text davor oder danach):
 {{
-  "found": true/false,
-  "title": "gefundener Titel oder null",
-  "authors": "gefundene Autoren oder null",
-  "year": "gefundenes Jahr oder null",
-  "url": "Link zur Quelle oder null",
-  "notes": "kurze Begründung / Abweichungen zur Originalangabe, auf Deutsch"
+  "found": true,
+  "title": "exakter Titel der gefundenen Publikation",
+  "authors": "Autoren der gefundenen Publikation",
+  "year": "Erscheinungsjahr",
+  "url": "DOI-Link oder URL zur Quelle",
+  "notes": "Abweichungen zur Originalangabe auf Deutsch, oder null wenn alles stimmt"
+}}
+
+Falls die Publikation NICHT existiert:
+{{
+  "found": false,
+  "title": null,
+  "authors": null,
+  "year": null,
+  "url": null,
+  "notes": "Begründung warum nicht gefunden"
 }}"""
 
 
@@ -52,6 +67,20 @@ def get_ai_provider(name: str):
     if name == "gemini":
         return GeminiProvider()
     raise AIProviderError(f"Unbekannter AI_PROVIDER: {name}")
+
+
+def _extract_json_from_text(text: str) -> str:
+    """Extrahiert JSON-Objekt robust aus KI-Antwort (auch wenn Text drumherum steht)."""
+    text = text.strip()
+    # Markdown-Codeblöcke entfernen
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s*```\s*$", "", text, flags=re.MULTILINE)
+    text = text.strip()
+    # JSON-Objekt direkt extrahieren falls Prosa davor/danach
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        return match.group(0)
+    return text
 
 
 class OpenRouterProvider:
@@ -99,21 +128,22 @@ class GeminiProvider:
 
 
 def _parse_ai_json(content: str) -> AIResult:
-    content = content.strip()
-    if content.startswith("```"):
-        content = content.strip("`")
-        content = content.split("\n", 1)[1] if "\n" in content else content
-        if content.lower().startswith("json"):
-            content = content[4:]
+    clean = _extract_json_from_text(content)
     try:
-        data = json.loads(content)
+        data = json.loads(clean)
     except json.JSONDecodeError as e:
-        raise AIProviderError(f"KI-Antwort konnte nicht als JSON gelesen werden: {e}") from e
+        raise AIProviderError(
+            f"KI-Antwort konnte nicht als JSON gelesen werden: {e}\nAntwort: {content[:300]}"
+        ) from e
+    notes = data.get("notes")
+    # "null" als String oder leere Notes normalisieren
+    if notes in (None, "null", ""):
+        notes = None
     return AIResult(
         found=bool(data.get("found")),
         title=data.get("title"),
         authors=data.get("authors"),
         year=str(data.get("year")) if data.get("year") else None,
         url=data.get("url"),
-        notes=data.get("notes"),
+        notes=notes,
     )

@@ -63,22 +63,24 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
                 found_source += f" - {ai_result.url}"
             notes = [ai_result.notes] if ai_result.notes else []
             status = STATUS_MINOR_ISSUES if notes else STATUS_OK
+            # Konfidenz: höher wenn KI keine Abweichungen meldet
+            confidence = 72.0 if notes else 80.0
             return Result(
                 number=citation.number,
                 original_citation=citation.raw_text,
                 status=status,
                 found_source=found_source,
                 discrepancies=notes,
-                method="KI-Websuche",
-                confidence=60.0,
+                method="KI-Websuche (Gemini)",
+                confidence=confidence,
             )
         return Result(
             number=citation.number,
             original_citation=citation.raw_text,
             status=STATUS_NOT_FOUND,
             discrepancies=[ai_result.notes] if ai_result.notes else [],
-            method="KI-Websuche",
-            confidence=40.0,
+            method="KI-Websuche (Gemini)",
+            confidence=35.0,
         )
 
     if api_match and api_score >= 50:

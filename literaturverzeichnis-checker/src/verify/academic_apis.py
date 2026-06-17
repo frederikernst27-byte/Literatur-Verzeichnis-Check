@@ -4,6 +4,7 @@ und Fuzzy-Matching gegen die geparste Zitatangabe. Kein API-Key nötig.
 from __future__ import annotations
 
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -158,26 +159,53 @@ def find_best_candidate(title: str, authors: str | None = None) -> tuple[Candida
     return best, best_title_score
 
 
+def _normalize(s: str) -> str:
+    """Normalisiert Umlaute und entfernt Akzente für robustes Fuzzy-Matching.
+    ü→ue, ä→ae, ö→oe, ß→ss, dann ASCII-only lowercased."""
+    s = s.replace("ü", "ue").replace("Ü", "Ue")
+    s = s.replace("ä", "ae").replace("Ä", "Ae")
+    s = s.replace("ö", "oe").replace("Ö", "Oe")
+    s = s.replace("ß", "ss")
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower()
+
+
 def compare_to_citation(citation, candidate: Candidate, title_score: float) -> list[str]:
     """Vergleicht die geparste Zitatangabe mit dem gefundenen Kandidaten und
     gibt eine Liste konkreter Abweichungen zurück."""
     discrepancies = []
 
-    if citation.year and candidate.year and citation.year != candidate.year:
-        discrepancies.append(f"Jahr weicht ab: Zitat nennt {citation.year}, gefunden wurde {candidate.year}")
+    # ±1 Jahr tolerieren (Online-first vs. Print-Datum ist normal)
+    if citation.year and candidate.year:
+        try:
+            if abs(int(citation.year) - int(candidate.year)) > 1:
+                discrepancies.append(
+                    f"Jahr weicht ab: Zitat nennt {citation.year}, gefunden wurde {candidate.year}"
+                )
+        except ValueError:
+            pass
 
     if citation.authors and candidate.authors:
-        author_str = " ".join(candidate.authors).lower()
-        cited_authors = [a.strip() for a in re_split_authors(citation.authors)]
+        # Normalisierte API-Autoren als Suchraum
+        author_str_norm = _normalize(" ".join(candidate.authors))
+        cited_authors = re_split_authors(citation.authors)
+        unmatched = []
         for cited in cited_authors:
             if not cited:
                 continue
-            author_score = fuzz.partial_ratio(cited.lower(), author_str)
-            if author_score < 70:
-                discrepancies.append(f"Autor '{cited}' im Original nicht in gefundener Quelle wiedergefunden (evtl. falsch geschrieben)")
-
-    if citation.pages and not candidate.url:
-        pass  # Seitenangaben werden von den APIs i.d.R. nicht geliefert -> nicht prüfbar
+            # Nur Nachnamen vergleichen (erster Token vor Leerzeichen/Komma)
+            last_name = re.split(r"[\s,]", cited)[0]
+            if len(last_name) < 3:
+                continue  # Initiale allein überspringen
+            score = fuzz.partial_ratio(_normalize(last_name), author_str_norm)
+            if score < 70:
+                unmatched.append(cited)
+        if unmatched:
+            discrepancies.append(
+                f"Autor(en) nicht gefunden: {', '.join(unmatched[:3])}"
+                + (" (evtl. Umlaut-/Schreibweise)" if any(
+                    c in "".join(unmatched) for c in "äöüÄÖÜß"
+                ) else "")
+            )
 
     if title_score < 95:
         discrepancies.append(f"Titel weicht leicht ab (Ähnlichkeit {title_score:.0f}%): gefunden '{candidate.title}'")
@@ -186,5 +214,23 @@ def compare_to_citation(citation, candidate: Candidate, title_score: float) -> l
 
 
 def re_split_authors(authors_str: str) -> list[str]:
-    parts = re.split(r";|\band\b|&|,(?=\s*[A-ZÄÖÜ][a-zäöü]+,)", authors_str)
-    return [p.strip(" .,") for p in parts if p.strip(" .,")]
+    """Splittet Autorenlisten in verschiedenen Formaten:
+    - "Nygaard I, Barber MD, Burgio KL" (Nachname + Initialen, kommagetrennt)
+    - "Smith, John; Jones, Mary" (invertiert, semikolongetrennt)
+    - "Smith J and Jones M" (mit 'and')
+    """
+    clean = re.sub(r"\s+et\s+al\.?\s*$", "", authors_str, flags=re.IGNORECASE).strip()
+
+    # Semikolon/and/& zuerst probieren
+    parts = re.split(r";|\band\b|&", clean)
+    if len(parts) > 1:
+        return [p.strip(" .,") for p in parts if p.strip(" .,")]
+
+    # Komma vor Großbuchstabe + Kleinbuchstabe = neuer Nachname
+    # Matcht "Nygaard I, Barber MD" weil "Barber" mit 'B'+'a' beginnt
+    parts = re.split(r",\s*(?=[A-ZÄÖÜ][a-zäöü])", clean)
+    if len(parts) > 1:
+        return [p.strip(" .,") for p in parts if p.strip(" .,")]
+
+    # Fallback: alles als eine Einheit
+    return [clean] if clean else []

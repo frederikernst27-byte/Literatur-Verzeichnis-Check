@@ -59,7 +59,8 @@ def check():
                 out_path,
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
-                use_ai=False,
+                # use_ai=None lässt die Pipeline den USE_AI-Env-Wert lesen
+                use_ai=None,
             )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
