@@ -61,11 +61,11 @@ class AIProviderError(RuntimeError):
     pass
 
 
-def get_ai_provider(name: str):
+def get_ai_provider(name: str, api_key: str | None = None):
     if name == "openrouter":
         return OpenRouterProvider()
     if name == "gemini":
-        return GeminiProvider()
+        return GeminiProvider(api_key=api_key)
     raise AIProviderError(f"Unbekannter AI_PROVIDER: {name}")
 
 
@@ -107,10 +107,10 @@ class OpenRouterProvider:
 
 
 class GeminiProvider:
-    def __init__(self):
-        self.api_key = os.environ.get("GEMINI_API_KEY")
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
-            raise AIProviderError("GEMINI_API_KEY fehlt in der .env")
+            raise AIProviderError("GEMINI_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
     def search_citation(self, citation_text: str) -> AIResult:
         resp = requests.post(

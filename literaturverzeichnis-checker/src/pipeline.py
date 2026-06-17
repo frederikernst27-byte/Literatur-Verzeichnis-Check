@@ -20,17 +20,18 @@ def run_pipeline(
     end_page: int | None = None,
     use_ai: bool | None = None,
     ai_provider: str | None = None,
+    gemini_api_key: str | None = None,
 ):
     use_ai = use_ai if use_ai is not None else os.environ.get("USE_AI", "false").lower() == "true"
-    ai_provider_name = ai_provider or os.environ.get("AI_PROVIDER", "openrouter")
+    ai_provider_name = ai_provider or os.environ.get("AI_PROVIDER", "gemini")
 
     provider = None
     if use_ai:
         try:
-            provider = get_ai_provider(ai_provider_name)
+            provider = get_ai_provider(ai_provider_name, api_key=gemini_api_key)
         except AIProviderError as e:
             raise AIProviderError(
-                f"KI-Fallback ist aktiviert (USE_AI=true), kann aber nicht initialisiert werden: {e}"
+                f"KI-Fallback ist aktiviert, kann aber nicht initialisiert werden: {e}"
             ) from e
 
     text = extract_text(pdf_path, start_page, end_page)
@@ -63,3 +64,8 @@ def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
     results = run_pipeline(pdf_path, **kwargs)
     export_to_excel(results, output_path)
     return output_path
+
+
+def has_server_ai_key() -> bool:
+    """Prüft ob ein Gemini-Key auf dem Server konfiguriert ist."""
+    return bool(os.environ.get("GEMINI_API_KEY"))

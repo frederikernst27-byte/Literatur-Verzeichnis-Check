@@ -9,11 +9,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "literaturverze
 
 from flask import Flask, jsonify, request, send_file  # noqa: E402
 
-from src.pipeline import run_pipeline_to_excel  # noqa: E402
+from src.pipeline import has_server_ai_key, run_pipeline_to_excel  # noqa: E402
 
 app = Flask(__name__)
 
 ALLOWED_BLOB_HOSTS_SUFFIX = ".public.blob.vercel-storage.com"
+
+
+@app.route("/api/ai-status", methods=["GET"])
+def ai_status():
+    return jsonify({"hasKey": has_server_ai_key()})
 
 
 @app.route("/", methods=["POST"])
@@ -21,19 +26,30 @@ ALLOWED_BLOB_HOSTS_SUFFIX = ".public.blob.vercel-storage.com"
 def check():
     pdf_file = request.files.get("pdf")
     blob_url = None
+    json_body = {}
     if request.is_json:
-        blob_url = (request.get_json(silent=True) or {}).get("blob_url")
+        json_body = request.get_json(silent=True) or {}
+        blob_url = json_body.get("blob_url")
     blob_url = blob_url or request.form.get("blob_url")
 
     if not pdf_file and not blob_url:
         return jsonify({"error": "Keine PDF-Datei hochgeladen."}), 400
 
-    start_page = request.form.get("start_page") or request.args.get("start_page")
-    end_page = request.form.get("end_page") or request.args.get("end_page")
-    if request.is_json:
-        json_body = request.get_json(silent=True) or {}
-        start_page = start_page or json_body.get("start_page")
-        end_page = end_page or json_body.get("end_page")
+    start_page = request.form.get("start_page") or request.args.get("start_page") or json_body.get("start_page")
+    end_page = request.form.get("end_page") or request.args.get("end_page") or json_body.get("end_page")
+
+    # KI-Modus: use_ai und optionaler Nutzer-Key aus dem Request
+    use_ai_raw = json_body.get("use_ai") or request.form.get("use_ai")
+    if use_ai_raw is not None:
+        use_ai = str(use_ai_raw).lower() in ("true", "1", "yes")
+    else:
+        use_ai = None  # Pipeline liest USE_AI aus der Umgebung
+
+    # Nutzer-eigener Gemini-Key (nur wenn Server keinen hat)
+    gemini_api_key = json_body.get("gemini_api_key") or request.form.get("gemini_api_key") or None
+    # Sicherheit: leeren String ignorieren
+    if gemini_api_key is not None:
+        gemini_api_key = gemini_api_key.strip() or None
 
     with tempfile.TemporaryDirectory() as tmp:
         pdf_path = os.path.join(tmp, "input.pdf")
@@ -59,8 +75,8 @@ def check():
                 out_path,
                 start_page=int(start_page) if start_page else None,
                 end_page=int(end_page) if end_page else None,
-                # use_ai=None lässt die Pipeline den USE_AI-Env-Wert lesen
-                use_ai=None,
+                use_ai=use_ai,
+                gemini_api_key=gemini_api_key,
             )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
