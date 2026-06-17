@@ -4,6 +4,7 @@ from __future__ import annotations
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 from .classify import STATUS_MINOR_ISSUES, STATUS_NOT_FOUND, STATUS_OK, STATUS_UNCLEAR, Result
 
@@ -16,7 +17,7 @@ STATUS_COLORS = {
 
 HEADERS = [
     "Nr.", "Original-Zitat", "Status", "Gefundene Quelle",
-    "Abweichungen", "Prüfmethode", "Konfidenz (%)",
+    "Abweichungen", "Prüfmethode", "Konfidenz (%)", "Link",
 ]
 
 
@@ -38,14 +39,22 @@ def export_to_excel(results: list[Result], output_path: str) -> None:
             "; ".join(r.discrepancies),
             r.method,
             round(r.confidence, 1),
+            "",  # Link-Zelle wird unten gesetzt
         ])
+        row = ws.max_row
         fill_color = STATUS_COLORS.get(r.status)
         if fill_color:
             fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
             for col in range(1, len(HEADERS) + 1):
-                ws.cell(row=ws.max_row, column=col).fill = fill
+                ws.cell(row=row, column=col).fill = fill
 
-    widths = [6, 50, 28, 45, 45, 14, 12]
+        if r.url:
+            link_cell = ws.cell(row=row, column=len(HEADERS))
+            link_cell.value = "Zum Paper"
+            link_cell.hyperlink = r.url
+            link_cell.font = Font(color="0563C1", underline="single")
+
+    widths = [6, 50, 28, 45, 45, 14, 12, 14]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

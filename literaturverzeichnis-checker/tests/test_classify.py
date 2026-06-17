@@ -27,3 +27,16 @@ def test_classify_not_found_when_no_match_and_no_ai():
     citation = make_citation()
     result = classify(citation, None, 0.0, [])
     assert result.status == STATUS_NOT_FOUND
+
+
+def test_classify_url_from_doi():
+    citation = make_citation()
+    candidate = Candidate("crossref", "Titel", ["A Müller"], "2020", "10.1234/xyz", "Verlag", None)
+    result = classify(citation, candidate, 95, [])
+    assert result.url == "https://doi.org/10.1234/xyz"
+
+
+def test_classify_url_from_citation_doi_when_no_candidate():
+    citation = make_citation(doi="10.9999/abc")
+    result = classify(citation, None, 0.0, [])
+    assert result.url == "https://doi.org/10.9999/abc"
