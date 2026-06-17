@@ -50,7 +50,7 @@ def classify(citation, api_match, api_score: float, api_discrepancies: list[str]
     """api_match: Candidate|None aus academic_apis.find_best_candidate.
     ai_result: AIResult|None aus ai_search, nur gesetzt wenn KI-Fallback lief.
     """
-    if api_match and api_score >= 80:
+    if api_match and api_score >= 60:
         api_label = API_SOURCE_LABELS.get(api_match.source_api, api_match.source_api)
         found_source = f"{api_match.title} ({api_match.year or '?'}) [{api_label}]"
         url = _make_url(candidate=api_match, citation=citation)

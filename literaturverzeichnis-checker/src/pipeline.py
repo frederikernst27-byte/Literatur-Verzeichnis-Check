@@ -2,9 +2,10 @@
 Wird sowohl von cli.py als auch von email_bot.py genutzt.
 
 Zweiphasige Verarbeitung:
-  Phase 1 – API: Alle Zitate parallel durch CrossRef/OpenAlex/Semantic Scholar.
-  Phase 2 – KI:  Unsichere Zitate (Score < 80) sortiert nach Score aufsteigend
-                  (schlechteste zuerst), bis zu AI_CALL_LIMIT KI-Calls parallel.
+  Phase 1 – API:    Alle Zitate parallel durch CrossRef/OpenAlex/Semantic Scholar.
+  Phase 2 – KI:     Unsichere Zitate (Score < 60) sortiert nach Score aufsteigend.
+                     Batch 1 (erste 40): Sheet 1 des Excel.
+                     Batch 2 (Overflow): zweite KI-Runde → Sheet 2 des Excel.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from .verify import academic_apis
 from .verify.ai_search import AIProviderError, get_ai_provider
 
 AI_CALL_LIMIT = 40
+SCORE_THRESHOLD = 60
 
 
 def run_pipeline(
@@ -46,7 +48,9 @@ def run_pipeline(
     citations = parse_citations(text)
 
     if not citations:
-        return []
+        return [], []
+
+    workers = min(8, len(citations))
 
     # --- Phase 1: API-Suche für alle Zitate parallel ---
     def api_lookup(citation):
@@ -56,68 +60,84 @@ def run_pipeline(
         )
         api_discrepancies = (
             academic_apis.compare_to_citation(citation, candidate, score)
-            if candidate and score >= 80
+            if candidate and score >= SCORE_THRESHOLD
             else []
         )
         return citation, candidate, score, api_discrepancies
 
-    workers = min(8, len(citations))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         api_results = list(executor.map(api_lookup, citations))
 
-    # --- Phase 2: KI für unsichere Zitate, sortiert nach Score (schlechteste zuerst) ---
-    if not (use_ai and provider):
-        return [classify(cit, cand, score, discrep, None) for cit, cand, score, discrep in api_results]
-
-    # Index beibehalten für Reihenfolge im Excel
+    # Sicher gefundene Zitate brauchen keine KI
+    certain_indices = {
+        idx for idx, (_, cand, score, _) in enumerate(api_results)
+        if cand and score >= SCORE_THRESHOLD
+    }
     uncertain = [
         (idx, cit, cand, score, discrep)
         for idx, (cit, cand, score, discrep) in enumerate(api_results)
-        if not cand or score < 80
+        if idx not in certain_indices
     ]
-    # Score 0 (kein Treffer) zuerst → bekommt garantiert KI-Slot
+    # Score 0 (kein Treffer) bekommt garantiert KI-Slot (aufsteigend sortiert)
     uncertain.sort(key=lambda x: x[3])
 
-    ai_slots = uncertain[:AI_CALL_LIMIT]
-    no_ai_slots = uncertain[AI_CALL_LIMIT:]
+    # Ohne KI: alle direkt klassifizieren
+    if not (use_ai and provider):
+        return [classify(cit, cand, score, discrep, None) for cit, cand, score, discrep in api_results], []
 
-    def ai_lookup(item):
-        idx, citation, candidate, score, api_discrepancies = item
-        search_title = citation.title or citation.raw_text
-        try:
-            all_candidates = academic_apis.get_all_candidates(search_title)
-            web_search = len(all_candidates) == 0
-            ai_result = provider.search_citation(
-                citation.raw_text, api_candidates=all_candidates, web_search=web_search
-            )
-        except Exception:
-            ai_result = None
-        return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
+    batch1 = uncertain[:AI_CALL_LIMIT]
+    batch2 = uncertain[AI_CALL_LIMIT:]  # Overflow → zweites Sheet
 
-    results: dict[int, object] = {}
+    def run_ai_batch(batch):
+        results: dict[int, object] = {}
 
-    # Certain citations brauchen keine KI
+        def ai_lookup(item):
+            idx, citation, candidate, score, api_discrepancies = item
+            search_title = citation.title or citation.raw_text
+            try:
+                all_candidates = academic_apis.get_all_candidates(search_title)
+                web_search = len(all_candidates) == 0
+                ai_result = provider.search_citation(
+                    citation.raw_text, api_candidates=all_candidates, web_search=web_search
+                )
+            except Exception:
+                ai_result = None
+            return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for future in as_completed(executor.submit(ai_lookup, item) for item in batch):
+                idx, result = future.result()
+                results[idx] = result
+        return results
+
+    # Batch 1 KI
+    ai_results1 = run_ai_batch(batch1)
+
+    # Sheet 1: alle Zitate (certain + batch1 mit KI, overflow ohne KI)
+    sheet1: dict[int, object] = {}
     for idx, (cit, cand, score, discrep) in enumerate(api_results):
-        if cand and score >= 80:
-            results[idx] = classify(cit, cand, score, discrep, None)
+        if idx in certain_indices:
+            sheet1[idx] = classify(cit, cand, score, discrep, None)
+        elif idx in ai_results1:
+            sheet1[idx] = ai_results1[idx]
+        else:
+            sheet1[idx] = classify(cit, cand, score, discrep, None)
 
-    # Übrig gebliebene uncertain ohne KI-Slot direkt klassifizieren
-    for idx, cit, cand, score, discrep in no_ai_slots:
-        results[idx] = classify(cit, cand, score, discrep, None)
+    results_sheet1 = [sheet1[i] for i in range(len(citations))]
 
-    # KI-Slots parallel verarbeiten
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(ai_lookup, item): item for item in ai_slots}
-        for future in as_completed(futures):
-            idx, result = future.result()
-            results[idx] = result
+    if not batch2:
+        return results_sheet1, []
 
-    return [results[i] for i in range(len(citations))]
+    # Batch 2 KI für Overflow
+    ai_results2 = run_ai_batch(batch2)
+    results_sheet2 = [ai_results2[idx] for idx, *_ in batch2]
+
+    return results_sheet1, results_sheet2
 
 
 def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
-    results = run_pipeline(pdf_path, **kwargs)
-    export_to_excel(results, output_path)
+    sheet1, sheet2 = run_pipeline(pdf_path, **kwargs)
+    export_to_excel(sheet1, sheet2, output_path)
     return output_path
 
 

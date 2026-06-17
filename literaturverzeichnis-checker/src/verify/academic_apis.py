@@ -12,7 +12,7 @@ import requests
 from rapidfuzz import fuzz
 
 TIMEOUT = 10
-TITLE_MATCH_THRESHOLD = 80  # ab hier gilt ein Treffer als "wahrscheinlich dieselbe Quelle"
+TITLE_MATCH_THRESHOLD = 60  # ab hier gilt ein Treffer als "wahrscheinlich dieselbe Quelle"
 
 
 @dataclass

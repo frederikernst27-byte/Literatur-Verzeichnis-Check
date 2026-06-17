@@ -1,10 +1,9 @@
-"""Schreibt die Prüfergebnisse als Excel-Tabelle."""
+"""Schreibt die Prüfergebnisse als Excel-Tabelle (1 oder 2 Sheets)."""
 from __future__ import annotations
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.hyperlink import Hyperlink
 
 from .classify import STATUS_MINOR_ISSUES, STATUS_NOT_FOUND, STATUS_OK, STATUS_UNCLEAR, Result
 
@@ -20,12 +19,11 @@ HEADERS = [
     "Abweichungen", "Prüfmethode", "Konfidenz (%)", "Link",
 ]
 
+COL_WIDTHS = [6, 50, 28, 45, 45, 14, 12, 14]
 
-def export_to_excel(results: list[Result], output_path: str) -> None:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Literaturpruefung"
 
+def _write_sheet(ws, results: list[Result], title: str) -> None:
+    ws.title = title
     ws.append(HEADERS)
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -39,7 +37,7 @@ def export_to_excel(results: list[Result], output_path: str) -> None:
             "; ".join(r.discrepancies),
             r.method,
             round(r.confidence, 1),
-            "",  # Link-Zelle wird unten gesetzt
+            "",
         ])
         row = ws.max_row
         fill_color = STATUS_COLORS.get(r.status)
@@ -54,9 +52,17 @@ def export_to_excel(results: list[Result], output_path: str) -> None:
             link_cell.hyperlink = r.url
             link_cell.font = Font(color="0563C1", underline="single")
 
-    widths = [6, 50, 28, 45, 45, 14, 12, 14]
-    for i, w in enumerate(widths, start=1):
+    for i, w in enumerate(COL_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
-
     ws.freeze_panes = "A2"
+
+
+def export_to_excel(results: list[Result], overflow: list[Result], output_path: str) -> None:
+    wb = Workbook()
+    _write_sheet(wb.active, results, "Literaturpruefung")
+
+    if overflow:
+        ws2 = wb.create_sheet("KI-Runde 2")
+        _write_sheet(ws2, overflow, "KI-Runde 2")
+
     wb.save(output_path)
