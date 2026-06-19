@@ -47,6 +47,18 @@ def run_pipeline(
     text = extract_text(pdf_path, start_page, end_page)
     citations = parse_citations(text)
 
+    # Wenn der regelbasierte Parser versagt (z.B. Springer-Buchkapitel ohne
+    # erkennbare Überschrift), nutze die KI um die Referenzen direkt aus dem
+    # Rohtext zu extrahieren.
+    if len(citations) < 2 and provider:
+        try:
+            raw_strings = provider.extract_citations_from_text(text)
+            if len(raw_strings) > len(citations):
+                from .parse_citations import Citation, _parse_entry
+                citations = [_parse_entry(i + 1, s) for i, s in enumerate(raw_strings)]
+        except Exception:
+            pass  # Fallback auf das bisherige Ergebnis
+
     if not citations:
         return [], []
 

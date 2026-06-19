@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 
 TIMEOUT = 25
 
+EXTRACT_PROMPT = """Der folgende Text wurde per OCR aus einer wissenschaftlichen PDF-Datei extrahiert. \
+Er enthält ein Literaturverzeichnis, möglicherweise aber auch Fließtext oder Kopfzeilen.
+
+Extrahiere NUR die einzelnen Literaturangaben als Liste. Ignoriere Fließtext, Kapitelüberschriften, \
+Seitenzahlen und Kopfzeilen. Jede Literaturangabe soll vollständig und in einer Zeile stehen.
+
+Antworte AUSSCHLIESSLICH als JSON-Array von Strings, z.B.:
+["Costello, T. (2012). RACI – Getting projects unstuck. IT Professional, 14(2), 64–63.",
+ "Dumas, M., La Rosa, M., Mendling, J., & Reijers, H. A. (2018). Fundamentals of business process management. Springer."]
+
+Text:
+\"\"\"
+{raw_text}
+\"\"\"
+"""
+
 PROMPT_TEMPLATE = """Du prüfst, ob die folgende Literaturangabe aus einer Abschlussarbeit \
 wirklich existiert.
 
@@ -116,6 +132,22 @@ class OpenRouterProvider:
         if not self.api_key:
             raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
+    def extract_citations_from_text(self, raw_text: str) -> list[str]:
+        prompt = EXTRACT_PROMPT.format(raw_text=raw_text[:12000])
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model.removesuffix(":online"),
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        return _parse_citation_list(content)
+
     def search_citation(self, citation_text: str, api_candidates=None, web_search: bool = True) -> AIResult:
         base = self.model.removesuffix(":online")
         model = f"{base}:online" if web_search else base
@@ -146,6 +178,22 @@ class GeminiProvider:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
             raise AIProviderError("GEMINI_API_KEY fehlt – bitte in den Einstellungen eintragen")
+
+    def extract_citations_from_text(self, raw_text: str) -> list[str]:
+        prompt = EXTRACT_PROMPT.format(raw_text=raw_text[:12000])
+        body: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+        resp = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+            params={"key": self.api_key},
+            json=body,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        candidate = (data.get("candidates") or [{}])[0]
+        parts = (candidate.get("content") or {}).get("parts") or []
+        content = next((p["text"] for p in parts if "text" in p), "")
+        return _parse_citation_list(content)
 
     def search_citation(self, citation_text: str, api_candidates=None, web_search: bool = True) -> AIResult:
         candidates_block = _format_api_candidates(api_candidates or [])
@@ -194,3 +242,21 @@ def _parse_ai_json(content: str) -> AIResult:
         url=data.get("url"),
         notes=notes,
     )
+
+
+def _parse_citation_list(content: str) -> list[str]:
+    """Parst eine JSON-Array-Antwort der KI in eine Liste von Zitat-Strings."""
+    clean = _extract_json_from_text(content)
+    # Manchmal antwortet die KI mit einem Objekt {"references": [...]}
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError:
+        # Fallback: Zeilen als einzelne Einträge
+        return [l.strip().strip('",') for l in content.splitlines() if len(l.strip()) > 20]
+    if isinstance(data, list):
+        return [str(x).strip() for x in data if str(x).strip()]
+    if isinstance(data, dict):
+        for key in ("references", "citations", "list", "items"):
+            if isinstance(data.get(key), list):
+                return [str(x).strip() for x in data[key] if str(x).strip()]
+    return []
