@@ -128,7 +128,7 @@ def _extract_json_from_text(text: str) -> str:
 class OpenRouterProvider:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        self.model = os.environ.get("OPENROUTER_MODEL", "openrouter/auto:free")
+        self.model = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
         if not self.api_key:
             raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
