@@ -128,9 +128,17 @@ def _extract_json_from_text(text: str) -> str:
 class OpenRouterProvider:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        self.model = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+        self.model = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
         if not self.api_key:
             raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
+
+    def _model_for(self, web_search: bool) -> str:
+        """Gibt den Modell-String zurück. :free-Modelle unterstützen kein :online."""
+        base = self.model.removesuffix(":online").removesuffix(":free")
+        is_free = ":free" in self.model
+        if is_free:
+            return f"{base}:free"
+        return f"{base}:online" if web_search else base
 
     def extract_citations_from_text(self, raw_text: str) -> list[str]:
         prompt = EXTRACT_PROMPT.format(raw_text=raw_text[:12000])
@@ -138,7 +146,7 @@ class OpenRouterProvider:
             "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
             json={
-                "model": self.model.removesuffix(":online"),
+                "model": self._model_for(web_search=False),
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=60,
@@ -149,8 +157,7 @@ class OpenRouterProvider:
         return _parse_citation_list(content)
 
     def search_citation(self, citation_text: str, api_candidates=None, web_search: bool = True) -> AIResult:
-        base = self.model.removesuffix(":online")
-        model = f"{base}:online" if web_search else base
+        model = self._model_for(web_search)
         candidates_block = _format_api_candidates(api_candidates or [])
         prompt = PROMPT_TEMPLATE.format(
             citation=citation_text,
