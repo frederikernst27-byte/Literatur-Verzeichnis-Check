@@ -145,15 +145,43 @@ def query_semantic_scholar(title: str, limit: int = 3) -> list[Candidate]:
     return out
 
 
+def query_core(title: str, limit: int = 3) -> list[Candidate]:
+    """CORE API – 200M+ Open-Access-Paper, gut für Konferenzbeiträge und Preprints."""
+    data = _safe_get(
+        "https://api.core.ac.uk/v3/search/works",
+        params={"q": title, "limit": limit},
+    )
+    if not data:
+        return []
+    out = []
+    for item in data.get("results", []):
+        authors = [a.get("name", "") for a in (item.get("authors") or [])]
+        doi = item.get("doi") or None
+        year = str(item.get("yearPublished")) if item.get("yearPublished") else None
+        urls = item.get("sourceFulltextUrls") or []
+        out.append(
+            Candidate(
+                source_api="core",
+                title=item.get("title") or "",
+                authors=authors,
+                year=year,
+                doi=doi,
+                venue=item.get("publisher"),
+                url=urls[0] if urls else item.get("downloadUrl"),
+            )
+        )
+    return out
+
+
 def get_all_candidates(title: str) -> list[Candidate]:
-    """Gibt alle Kandidaten aus allen drei APIs zurück – wird als Kontext für die KI genutzt."""
+    """Gibt alle Kandidaten aus CrossRef, OpenAlex, Semantic Scholar und CORE zurück."""
     if not title or len(title.strip()) < 5:
         return []
     candidates: list[Candidate] = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [
             executor.submit(query_fn, title)
-            for query_fn in (query_crossref, query_openalex, query_semantic_scholar)
+            for query_fn in (query_crossref, query_openalex, query_semantic_scholar, query_core)
         ]
         for future in futures:
             candidates.extend(future.result())
@@ -184,10 +212,10 @@ def find_best_candidate(
         return None, 0.0
 
     candidates: list[Candidate] = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [
             executor.submit(query_fn, title)
-            for query_fn in (query_crossref, query_openalex, query_semantic_scholar)
+            for query_fn in (query_crossref, query_openalex, query_semantic_scholar, query_core)
         ]
         for future in futures:
             candidates.extend(future.result())
