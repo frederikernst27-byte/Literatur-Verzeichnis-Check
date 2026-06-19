@@ -78,7 +78,7 @@
 </style>
 </head>
 <body>
-<div class="version-badge">v1.7.5</div>
+<div class="version-badge">v1.7.6</div>
 <main>
   <h1>Literaturverzeichnis-Checker</h1>
   <p class="lead">
@@ -287,43 +287,41 @@ form.addEventListener('submit', async (e) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 270000);
 
-    let res;
-    // Versuche zuerst Blob-Upload (für große PDFs / Vercel-Limits)
-    let blobOk = false;
-    try {
-      const mod = await import('https://esm.sh/@vercel/blob@0.27.0/client');
-      const blob = await mod.upload(file.name, file, {
-        access: 'public',
-        handleUploadUrl: '/api/blob-upload',
-      });
-      const body = {
-        blob_url: blob.url,
-        use_ai:   useAi,
-        ...(startPage && { start_page: startPage }),
-        ...(endPage   && { end_page:   endPage }),
-      };
-      if (useAi && enteredKey) body.openrouter_api_key = enteredKey;
-      res = await fetch('/api/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      blobOk = true;
-    } catch (blobErr) {
-      if (blobErr.name === 'AbortError') throw blobErr;
-      // Fallback: PDF direkt als FormData hochladen
+    // Blob-Upload-Bibliothek von mehreren CDNs versuchen
+    const BLOB_CDNS = [
+      'https://esm.sh/@vercel/blob@0.27.0/client',
+      'https://cdn.jsdelivr.net/npm/@vercel/blob@0.27.0/+esm',
+      'https://unpkg.com/@vercel/blob@0.27.0/dist/client.js',
+    ];
+    let uploadFn = null;
+    for (const cdn of BLOB_CDNS) {
+      try {
+        const mod = await import(cdn);
+        if (mod.upload) { uploadFn = mod.upload; break; }
+      } catch { /* nächster CDN */ }
+    }
+    if (!uploadFn) {
+      clearTimeout(timeoutId);
+      throw new Error('Upload-Bibliothek nicht ladbar. Bitte Seite neu laden oder anderen Browser versuchen.');
     }
 
-    if (!blobOk) {
-      const fd = new FormData();
-      fd.append('pdf', file);
-      fd.append('use_ai', String(useAi));
-      if (startPage) fd.append('start_page', startPage);
-      if (endPage)   fd.append('end_page', endPage);
-      if (useAi && enteredKey) fd.append('openrouter_api_key', enteredKey);
-      res = await fetch('/api/check', { method: 'POST', body: fd, signal: controller.signal });
-    }
+    const blob = await uploadFn(file.name, file, {
+      access: 'public',
+      handleUploadUrl: '/api/blob-upload',
+    });
+    const body = {
+      blob_url: blob.url,
+      use_ai:   useAi,
+      ...(startPage && { start_page: startPage }),
+      ...(endPage   && { end_page:   endPage }),
+    };
+    if (useAi && enteredKey) body.openrouter_api_key = enteredKey;
+    const res = await fetch('/api/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
 
     clearTimeout(timeoutId);
 
