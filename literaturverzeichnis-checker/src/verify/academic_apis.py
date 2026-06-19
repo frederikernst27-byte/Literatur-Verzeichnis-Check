@@ -1,8 +1,9 @@
-"""Abfrage kostenloser akademischer APIs (CrossRef, OpenAlex, Semantic Scholar)
-und Fuzzy-Matching gegen die geparste Zitatangabe. Kein API-Key nötig.
+"""Abfrage akademischer APIs (CrossRef, OpenAlex, Semantic Scholar, CORE, Google Scholar via SerpAPI)
+und Fuzzy-Matching gegen die geparste Zitatangabe.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
@@ -173,16 +174,49 @@ def query_core(title: str, limit: int = 3) -> list[Candidate]:
     return out
 
 
+def query_google_scholar(title: str, limit: int = 3) -> list[Candidate]:
+    """Google Scholar via SerpAPI – breiteste Abdeckung, auch graue Literatur."""
+    api_key = os.environ.get("SERPAPI_KEY")
+    if not api_key:
+        return []
+    data = _safe_get(
+        "https://serpapi.com/search",
+        params={"engine": "google_scholar", "q": title, "num": limit, "api_key": api_key},
+    )
+    if not data:
+        return []
+    out = []
+    for item in data.get("organic_results", []):
+        pub_info = item.get("publication_info", {})
+        summary = pub_info.get("summary", "")
+        # Jahr aus Summary extrahieren (z.B. "Smith et al., 2018 - Journal of...")
+        year_match = re.search(r"\b(1[89]\d{2}|20\d{2})\b", summary)
+        year = year_match.group(1) if year_match else None
+        authors = [a.get("name", "") for a in pub_info.get("authors", [])]
+        out.append(
+            Candidate(
+                source_api="google_scholar",
+                title=item.get("title") or "",
+                authors=authors,
+                year=year,
+                doi=None,
+                venue=summary,
+                url=item.get("link"),
+            )
+        )
+    return out
+
+
 def get_all_candidates(title: str) -> list[Candidate]:
-    """Gibt alle Kandidaten aus CrossRef, OpenAlex, Semantic Scholar und CORE zurück."""
+    """Gibt alle Kandidaten aus CrossRef, OpenAlex, Semantic Scholar, CORE und Google Scholar zurück."""
     if not title or len(title.strip()) < 5:
         return []
     candidates: list[Candidate] = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(query_fn, title)
-            for query_fn in (query_crossref, query_openalex, query_semantic_scholar, query_core)
-        ]
+    query_fns = [query_crossref, query_openalex, query_semantic_scholar, query_core]
+    if os.environ.get("SERPAPI_KEY"):
+        query_fns.append(query_google_scholar)
+    with ThreadPoolExecutor(max_workers=len(query_fns)) as executor:
+        futures = [executor.submit(fn, title) for fn in query_fns]
         for future in futures:
             candidates.extend(future.result())
     return candidates
@@ -212,11 +246,11 @@ def find_best_candidate(
         return None, 0.0
 
     candidates: list[Candidate] = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(query_fn, title)
-            for query_fn in (query_crossref, query_openalex, query_semantic_scholar, query_core)
-        ]
+    query_fns = [query_crossref, query_openalex, query_semantic_scholar, query_core]
+    if os.environ.get("SERPAPI_KEY"):
+        query_fns.append(query_google_scholar)
+    with ThreadPoolExecutor(max_workers=len(query_fns)) as executor:
+        futures = [executor.submit(fn, title) for fn in query_fns]
         for future in futures:
             candidates.extend(future.result())
 
