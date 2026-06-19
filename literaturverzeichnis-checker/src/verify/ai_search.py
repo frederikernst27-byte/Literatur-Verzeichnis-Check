@@ -128,16 +128,16 @@ def _extract_json_from_text(text: str) -> str:
 class OpenRouterProvider:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-        self.model = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
+        self.model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
         if not self.api_key:
             raise AIProviderError("OPENROUTER_API_KEY fehlt – bitte in den Einstellungen eintragen")
 
     def _model_for(self, web_search: bool) -> str:
-        """Gibt den Modell-String zurück. :free-Modelle unterstützen kein :online."""
-        base = self.model.removesuffix(":online").removesuffix(":free")
-        is_free = ":free" in self.model
+        """Gibt den Modell-String zurück. :free-Modelle und openrouter/free unterstützen kein :online."""
+        is_free = ":free" in self.model or self.model == "openrouter/free"
         if is_free:
-            return f"{base}:free"
+            return self.model.removesuffix(":online")
+        base = self.model.removesuffix(":online")
         return f"{base}:online" if web_search else base
 
     def extract_citations_from_text(self, raw_text: str) -> list[str]:
