@@ -14,7 +14,10 @@ NUMBERED_LINE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)[.)])\s+")
 YEAR_RE = re.compile(r"\(?\b(1[89]\d{2}|20\d{2})[a-z]?\b\)?")
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s,;]+)", re.IGNORECASE)
 PAGES_RE = re.compile(r"\b[Ss]\.?\s*(\d+)\s*(?:[-–—]\s*(\d+))?\b|\bpp?\.\s*(\d+)\s*(?:[-–—]\s*(\d+))?")
-AUTHOR_START_RE = re.compile(r"^[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]")
+# Matches "Rosemann, M." but also "vom Brocke, J.", "van der Aalst, W."
+AUTHOR_START_RE = re.compile(
+    r"^(?:[a-zäöü]{2,4}\s+)*[A-ZÄÖÜ][\wÀ-ÿ'\-]+,\s*[A-ZÄÖÜ]"
+)
 
 # Ein "Eintrag", der nach dem Splitten nur aus einem DOI-/URL-Rest besteht,
 # ist keine eigene Quelle - er wurde vermutlich durch einen Spalten- oder
@@ -100,12 +103,14 @@ def _postprocess_entries(entries: list[str]) -> list[str]:
         else:
             merged.append(entry)
 
-    if merged:
-        garbage_match = _TRAILING_GARBAGE_RE.search(merged[-1])
-        if garbage_match:
-            merged[-1] = merged[-1][: garbage_match.start()].strip()
+    # Strip trailing garbage (running headers, "Authors and Affiliations", etc.)
+    # from every entry - page breaks can inject these anywhere in the list.
+    cleaned: list[str] = []
+    for entry in merged:
+        garbage_match = _TRAILING_GARBAGE_RE.search(entry)
+        cleaned.append(entry[: garbage_match.start()].strip() if garbage_match else entry)
 
-    return merged
+    return cleaned
 
 
 def _is_orphan_fragment(entry: str) -> bool:
@@ -139,7 +144,14 @@ def _split_long_paragraph(paragraph: str) -> list[str]:
 
     boundaries.append(len(paragraph))
     entries = [paragraph[s:e].strip() for s, e in zip(boundaries, boundaries[1:])]
-    return [e for e in entries if len(e) > 20]
+    entries = [e for e in entries if len(e) > 20]
+
+    # Sanity check: if most entries are very long (>600 chars) this is likely
+    # body text, not a reference list - don't split it.
+    if entries and sum(1 for e in entries if len(e) > 600) > len(entries) / 2:
+        return [paragraph]
+
+    return entries
 
 
 _NUMBERED_PREFIX_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")

@@ -40,7 +40,11 @@ def _heading_match(line: str, headings: tuple[str, ...]) -> bool:
     candidate = _LEADING_NUMBERING_RE.sub("", line)
     candidate = _TRAILING_PAGE_NUM_RE.sub("", candidate)
     candidate = candidate.strip(" .:-–—").lower()
-    return candidate in headings
+    if candidate in headings:
+        return True
+    # Some PDFs letter-space headings: "R e f e r e n c e s" → "references"
+    collapsed = re.sub(r"(?<=\w) (?=\w)", "", candidate)
+    return collapsed in headings
 
 
 def _find_heading_line(text: str, headings: tuple[str, ...]) -> bool:
