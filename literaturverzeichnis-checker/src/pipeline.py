@@ -3,13 +3,13 @@ Wird sowohl von cli.py als auch von email_bot.py genutzt.
 
 Zweiphasige Verarbeitung:
   Phase 1 – API:    Alle Zitate parallel durch CrossRef/OpenAlex/Semantic Scholar.
-  Phase 2 – KI:     Unsichere Zitate (Score < 60) sortiert nach Score aufsteigend.
-                     Batch 1 (erste 40): Sheet 1 des Excel.
-                     Batch 2 (Overflow): zweite KI-Runde → Sheet 2 des Excel.
+  Phase 2 – KI:     Alle unsicheren Zitate (Score < SCORE_THRESHOLD) erhalten
+                     KI-Behandlung. Kein Limit – alle Ergebnisse in Sheet 1.
 """
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .classify import classify
@@ -19,8 +19,26 @@ from .parse_citations import parse_citations
 from .verify import academic_apis
 from .verify.ai_search import AIProviderError, get_ai_provider
 
-AI_CALL_LIMIT = 40
 SCORE_THRESHOLD = 60
+
+# Häufige OCR-Artefakte die API-Suche sabotieren
+_OCR_FIXES = [
+    (re.compile(r"^\*e\b"),          "The "),   # "*e role" → "The role"
+    (re.compile(r"^:e\b"),           "The "),   # ":e role" → "The role"
+    (re.compile(r"\*e\b"),           "The "),
+    (re.compile(r":e\b"),            "The "),
+    (re.compile(r"\bu¨\b", re.I),    "ü"),
+    (re.compile(r"\bo¨\b", re.I),    "ö"),
+    (re.compile(r"\ba¨\b", re.I),    "ä"),
+]
+
+
+def _clean_ocr(text: str) -> str:
+    for pattern, replacement in _OCR_FIXES:
+        text = pattern.sub(replacement, text)
+    # Leerzeichen in zusammengezogene Wörter einfügen ist zu fehleranfällig;
+    # stattdessen nur sichtbare Trennzeichen normalisieren
+    return text.strip()
 
 
 def run_pipeline(
@@ -54,10 +72,10 @@ def run_pipeline(
         try:
             raw_strings = provider.extract_citations_from_text(text)
             if len(raw_strings) > len(citations):
-                from .parse_citations import Citation, _parse_entry
+                from .parse_citations import _parse_entry
                 citations = [_parse_entry(i + 1, s) for i, s in enumerate(raw_strings)]
         except Exception:
-            pass  # Fallback auf das bisherige Ergebnis
+            pass
 
     if not citations:
         return [], []
@@ -66,9 +84,9 @@ def run_pipeline(
 
     # --- Phase 1: API-Suche für alle Zitate parallel ---
     def api_lookup(citation):
-        search_title = citation.title or citation.raw_text
+        raw = _clean_ocr(citation.title or citation.raw_text)
         candidate, score = academic_apis.find_best_candidate(
-            search_title, citation.authors, citation.doi
+            raw, citation.authors, citation.doi
         )
         api_discrepancies = (
             academic_apis.compare_to_citation(citation, candidate, score)
@@ -80,7 +98,10 @@ def run_pipeline(
     with ThreadPoolExecutor(max_workers=workers) as executor:
         api_results = list(executor.map(api_lookup, citations))
 
-    # Sicher gefundene Zitate brauchen keine KI
+    # Ohne KI: alle direkt klassifizieren
+    if not (use_ai and provider):
+        return [classify(cit, cand, score, discrep, None) for cit, cand, score, discrep in api_results], []
+
     certain_indices = {
         idx for idx, (_, cand, score, _) in enumerate(api_results)
         if cand and score >= SCORE_THRESHOLD
@@ -90,61 +111,39 @@ def run_pipeline(
         for idx, (cit, cand, score, discrep) in enumerate(api_results)
         if idx not in certain_indices
     ]
-    # Score 0 (kein Treffer) bekommt garantiert KI-Slot (aufsteigend sortiert)
-    uncertain.sort(key=lambda x: x[3])
+    uncertain.sort(key=lambda x: x[3])  # Score aufsteigend (0 zuerst)
 
-    # Ohne KI: alle direkt klassifizieren
-    if not (use_ai and provider):
-        return [classify(cit, cand, score, discrep, None) for cit, cand, score, discrep in api_results], []
+    # --- Phase 2: KI für ALLE unsicheren Zitate (kein Limit) ---
+    ai_results: dict[int, object] = {}
 
-    batch1 = uncertain[:AI_CALL_LIMIT]
-    batch2 = uncertain[AI_CALL_LIMIT:]  # Overflow → zweites Sheet
+    def ai_lookup(item):
+        idx, citation, candidate, score, api_discrepancies = item
+        raw = _clean_ocr(citation.title or citation.raw_text)
+        try:
+            all_candidates = academic_apis.get_all_candidates(raw)
+            web_search = len(all_candidates) == 0
+            ai_result = provider.search_citation(
+                _clean_ocr(citation.raw_text),
+                api_candidates=all_candidates,
+                web_search=web_search,
+            )
+        except Exception:
+            ai_result = None
+        return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
 
-    def run_ai_batch(batch):
-        results: dict[int, object] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for future in as_completed(executor.submit(ai_lookup, item) for item in uncertain):
+            idx, result = future.result()
+            ai_results[idx] = result
 
-        def ai_lookup(item):
-            idx, citation, candidate, score, api_discrepancies = item
-            search_title = citation.title or citation.raw_text
-            try:
-                all_candidates = academic_apis.get_all_candidates(search_title)
-                web_search = len(all_candidates) == 0
-                ai_result = provider.search_citation(
-                    citation.raw_text, api_candidates=all_candidates, web_search=web_search
-                )
-            except Exception:
-                ai_result = None
-            return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            for future in as_completed(executor.submit(ai_lookup, item) for item in batch):
-                idx, result = future.result()
-                results[idx] = result
-        return results
-
-    # Batch 1 KI
-    ai_results1 = run_ai_batch(batch1)
-
-    # Sheet 1: alle Zitate (certain + batch1 mit KI, overflow ohne KI)
-    sheet1: dict[int, object] = {}
+    results = []
     for idx, (cit, cand, score, discrep) in enumerate(api_results):
         if idx in certain_indices:
-            sheet1[idx] = classify(cit, cand, score, discrep, None)
-        elif idx in ai_results1:
-            sheet1[idx] = ai_results1[idx]
+            results.append(classify(cit, cand, score, discrep, None))
         else:
-            sheet1[idx] = classify(cit, cand, score, discrep, None)
+            results.append(ai_results.get(idx, classify(cit, cand, score, discrep, None)))
 
-    results_sheet1 = [sheet1[i] for i in range(len(citations))]
-
-    if not batch2:
-        return results_sheet1, []
-
-    # Batch 2 KI für Overflow
-    ai_results2 = run_ai_batch(batch2)
-    results_sheet2 = [ai_results2[idx] for idx, *_ in batch2]
-
-    return results_sheet1, results_sheet2
+    return results, []
 
 
 def run_pipeline_to_excel(pdf_path: str, output_path: str, **kwargs) -> str:
