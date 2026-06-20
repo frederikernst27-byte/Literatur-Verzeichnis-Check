@@ -3,8 +3,9 @@ Wird sowohl von cli.py als auch von email_bot.py genutzt.
 
 Zweiphasige Verarbeitung:
   Phase 1 – API:    Alle Zitate parallel durch CrossRef/OpenAlex/Semantic Scholar.
-  Phase 2 – KI:     Alle unsicheren Zitate (Score < SCORE_THRESHOLD) erhalten
-                     KI-Behandlung. Kein Limit – alle Ergebnisse in Sheet 1.
+  Phase 2 – KI:     Unsichere Zitate (Score < SCORE_THRESHOLD) erhalten KI-Behandlung.
+                     Max. AI_CALL_LIMIT Aufrufe (niedrigste Scores zuerst). Alle
+                     Ergebnisse landen in Sheet 1 – auch die ohne KI-Prüfung.
 """
 from __future__ import annotations
 
@@ -20,6 +21,11 @@ from .verify import academic_apis
 from .verify.ai_search import AIProviderError, get_ai_provider
 
 SCORE_THRESHOLD = 60
+# Max. KI-Aufrufe pro Lauf – verhindert Timeouts auf Vercel (300s Limit).
+# Die Zitate mit den niedrigsten API-Scores werden bevorzugt geprüft.
+AI_CALL_LIMIT = 25
+# Max. parallele KI-Requests – schont das Free-Tier Rate-Limit
+AI_WORKERS = 3
 
 # Häufige OCR-Artefakte die API-Suche sabotieren
 _OCR_FIXES = [
@@ -113,7 +119,9 @@ def run_pipeline(
     ]
     uncertain.sort(key=lambda x: x[3])  # Score aufsteigend (0 zuerst)
 
-    # --- Phase 2: KI für ALLE unsicheren Zitate (kein Limit) ---
+    # --- Phase 2: KI für die unsichersten Zitate (max. AI_CALL_LIMIT) ---
+    # Zitate mit niedrigstem Score kommen zuerst; der Rest bleibt API-only.
+    ai_batch = uncertain[:AI_CALL_LIMIT]
     ai_results: dict[int, object] = {}
 
     def ai_lookup(item):
@@ -131,8 +139,8 @@ def run_pipeline(
             ai_result = None
         return idx, classify(citation, candidate, score, api_discrepancies, ai_result)
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        for future in as_completed(executor.submit(ai_lookup, item) for item in uncertain):
+    with ThreadPoolExecutor(max_workers=AI_WORKERS) as executor:
+        for future in as_completed(executor.submit(ai_lookup, item) for item in ai_batch):
             idx, result = future.result()
             ai_results[idx] = result
 
